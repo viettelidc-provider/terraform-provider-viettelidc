@@ -79,19 +79,19 @@ resource "viettelidc_voks_cluster" "example" {
 
 ### Required
 
-- `name` (String) Name of the Vettel Kuberneters Cluster.
-- `version` (String) Version of Viettel Kubernetes Cluster.
+- `name` (String) Name of the VettelIdc Kuberneters Cluster.
+- `version` (String) Version of ViettelIdc Kubernetes Cluster.
 
 ### Optional
 
 - `nfs` (Attributes) NFS storage enables multiple nodes in the cluster to access the same file system over a network. (see [below for nested schema](#nestedatt--nfs))
-- `vpc_config` (Block, Optional) The vpc_config is a configuration that helps define the networking setup for the Viettel Kubernetes Cluster. (see [below for nested schema](#nestedblock--vpc_config))
+- `vpc_config` (Block, Optional) The vpc_config is a configuration that helps define the networking setup for the ViettelIdc Kubernetes Cluster. (see [below for nested schema](#nestedblock--vpc_config))
 
 ### Read-Only
 
-- `endpoint` (String) Endpoint for your Viettel Kuberneters API server.
-- `id` (Number) Id of the Vettel Kuberneters Cluster.
-- `status` (String) The current status of Viettel Kubernetes Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.
+- `endpoint` (String) Endpoint for your ViettelIdc Kuberneters API server.
+- `id` (Number) Id of the VettelIdc Kuberneters Cluster.
+- `status` (String) The current status of ViettelIdc Kubernetes Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.
 
 <a id="nestedatt--nfs"></a>
 ### Nested Schema for `nfs`
@@ -103,9 +103,9 @@ Optional:
 Read-Only:
 
 - `cpu` (Number) The CPU size of NFS server.
-- `ip_address` (String) Internal IP of NFS server that can be accessed by internal network of your Viettel Kubernetes Cluster.
+- `ip_address` (String) Internal IP of NFS server that can be accessed by internal network of your ViettelIdc Kubernetes Cluster.
 - `memory` (Number) The memory size of NFS server.
-- `status` (String) Status of Viettel Kubernetes Cluster NFS Storage. When the NFS Storage is present in Terraform, its status will always be `POWER_ON`. Valid values: `POWER_ON`, `UPDATING`, `ERROR`.
+- `status` (String) Status of ViettelIdc Kubernetes Cluster NFS Storage. When the NFS Storage is present in Terraform, its status will always be `POWER_ON`. Valid values: `POWER_ON`, `UPDATING`, `ERROR`.
 - `total_storage_size` (Number) The size allocated for NFS volumes.
 
 
