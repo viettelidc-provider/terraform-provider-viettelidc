@@ -80,8 +80,6 @@ github.com/hashicorp/terraform-json v0.22.1 h1:xft84GZR0QzjPVWs4lRUwvTcPnegqlyS7
 github.com/hashicorp/terraform-json v0.22.1/go.mod h1:JbWSQCLFSXFFhg42T7l9iJwdGXBYV8fmmD6o/ML4p3A=
 github.com/hashicorp/terraform-plugin-framework v1.13.0 h1:8OTG4+oZUfKgnfTdPTJwZ532Bh2BobF4H+yBiYJ/scw=
 github.com/hashicorp/terraform-plugin-framework v1.13.0/go.mod h1:j64rwMGpgM3NYXTKuxrCnyubQb/4VKldEKlcG8cvmjU=
-github.com/hashicorp/terraform-plugin-framework-validators v0.15.0 h1:RXMmu7JgpFjnI1a5QjMCBb11usrW2OtAG+iOTIj5c9Y=
-github.com/hashicorp/terraform-plugin-framework-validators v0.15.0/go.mod h1:Bh89/hNmqsEWug4/XWKYBwtnw3tbz5BAy1L1OgvbIaY=
 github.com/hashicorp/terraform-plugin-go v0.25.0 h1:oi13cx7xXA6QciMcpcFi/rwA974rdTxjqEhXJjbAyks=
 github.com/hashicorp/terraform-plugin-go v0.25.0/go.mod h1:+SYagMYadJP86Kvn+TGeV+ofr/R3g4/If0O5sO96MVw=
 github.com/hashicorp/terraform-plugin-log v0.9.0 h1:i7hOA+vdAItN1/7UrfBqBwvYPQ9TFvymaRGZED3FCV0=
@@ -145,6 +143,12 @@ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/stretchr/testify v1.7.2/go.mod h1:R6va5+xMeoiuVRoj+gSkQ7d3FALtqAAGI1FQKckRals=
 github.com/stretchr/testify v1.8.3 h1:RP3t2pwF7cMEbC1dqtB6poj3niw/9gnV4Cjg5oW5gtY=
 github.com/stretchr/testify v1.8.3/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXlSw2iwfAo=
+github.com/viettelidc-provider/viettelidc-api-client-go v1.0.0 h1:nUCjkaVTQKpMFIK5cfNC+eIFvWRy/uyxo6zkad2P4Fs=
+github.com/viettelidc-provider/viettelidc-api-client-go v1.0.0/go.mod h1:8s9l0JHkvwwhNkWt3V/aP9WVE5nYWnwCoToKx8yd/Os=
+github.com/viettelidc-provider/viettelidc-api-client-go/service/iam v1.0.0 h1:o68V6g5pbMEZTrTZGmQMTizg1f2qDXDrhkPnPTMbQ00=
+github.com/viettelidc-provider/viettelidc-api-client-go/service/iam v1.0.0/go.mod h1:xZd7DonSEtpIWXwYH7HAbnxMVUXCpZlbaUOV94BuyEM=
+github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.0 h1:UaMYSUApgqownBWYqi74ffkH1XGEv4Tm0/tCDFUWhtA=
+github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.0/go.mod h1:i32KkR4bBf5ekmEEWqImwsh1MgBSQyNzZ3NPQv67pio=
 github.com/vmihailenco/msgpack v3.3.3+incompatible/go.mod h1:fy3FlTQTDXWkZ7Bh6AcGMlsjHatGryHQYUTf1ShIgkk=
 github.com/vmihailenco/msgpack v4.0.4+incompatible h1:dSLoQfGFAo3F6OoNhwUmLwVgaUXK79GlxNBwueZn0xI=
 github.com/vmihailenco/msgpack v4.0.4+incompatible/go.mod h1:fy3FlTQTDXWkZ7Bh6AcGMlsjHatGryHQYUTf1ShIgkk=
