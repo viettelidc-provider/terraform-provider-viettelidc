@@ -14,7 +14,7 @@ Interact with Viettel Kubernetes.
 
 ```terraform
 # Configuration-base authentication
-provider "scaffolding" {
+provider "viettelidc" {
   domain_id = "3b3e6994-4b04-40ea-bedc-5befd874d73a"
   username  = "iac"
   password  = var.viettelidc_password
@@ -28,6 +28,7 @@ provider "scaffolding" {
 ### Optional
 
 - `domain_id` (String) DomainId for Viettel Kubernetes API.
+- `host` (String)
 - `mfa_code` (String) Muti-factor Authentication code for Viettel Kubernetes API.
 - `password` (String) Password for Viettel Kubernetes API.
 - `username` (String) Username for Viettel Kubernetes API.

@@ -23,7 +23,7 @@ data "viettelidc_voks_kubeconfig" "example" {
 
 ### Required
 
-- `cluster_id` (Number) Id of the Viettel Kuberneters Cluster.
+- `cluster_id` (Number) Id of the ViettelIdc Kuberneters Cluster.
 
 ### Read-Only
 

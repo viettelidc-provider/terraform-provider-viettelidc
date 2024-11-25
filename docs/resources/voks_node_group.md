@@ -3,12 +3,12 @@
 page_title: "viettelidc_voks_node_group Resource - viettelidc"
 subcategory: ""
 description: |-
-  Collection of nodes in a Viettel Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.
+  Collection of nodes in a ViettelIdc Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.
 ---
 
 # viettelidc_voks_node_group (Resource)
 
-Collection of nodes in a Viettel Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.
+Collection of nodes in a ViettelIdc Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.
 
 ## Example Usage
 
@@ -105,20 +105,20 @@ resource "viettelidc_voks_node_group" "example" {
 ### Required
 
 - `cluster_id` (Number) The ID of the Cluster into which you want to create one or more node groups.
-- `name` (String) Name of the Vettel Kuberneters Cluster.
-- `resource_type` (String) Instance type associated with the Viettel Node Group.
+- `name` (String) Name of the VettelIdc Kuberneters Cluster.
+- `resource_type` (String) Instance type associated with the ViettelIdc Node Group.
 
 ### Optional
 
-- `auto_repair` (Boolean) Default to `false`. Set it to `true` help keep the nodes in your Viettel Kubernetes cluster in a healthy, running state.
+- `auto_repair` (Boolean) Default to `false`. Set it to `true` help keep the nodes in your ViettelIdc Kubernetes cluster in a healthy, running state.
 - `labels` (Map of String) Key/value pairs attached to objects like Pods. They specify identifying attributes meaningfull to users but do not imply semantics to the core system.
 - `scaling_config` (Block, Optional) Configuration required by the cluster autoscaler to adjust the size of the node group based on current cluster usage. (see [below for nested schema](#nestedblock--scaling_config))
 - `taint` (Block List) The Kubernetes taints to be applied to the nodes in the Node Group. (see [below for nested schema](#nestedblock--taint))
 
 ### Read-Only
 
-- `id` (Number) Id of the Vettel Kuberneters Cluster.
-- `status` (String) The current status of Viettel Kubernetes Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.
+- `id` (Number) Id of the VettelIdc Kuberneters Cluster.
+- `status` (String) The current status of ViettelIdc Kubernetes Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.
 
 <a id="nestedblock--scaling_config"></a>
 ### Nested Schema for `scaling_config`

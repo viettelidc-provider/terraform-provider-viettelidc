@@ -26,10 +26,10 @@ data "viettelidc_voks_addon" "example" {
 
 ### Required
 
-- `cluster_id` (Number) Id of the Viettel Kuberneters Cluster.
-- `name` (String) Name of the VietelIdc Kubernetes Add-on.
-- `version` (String) Version of Viettel Kubernetes Add-on.
+- `cluster_id` (Number) Id of the ViettelIdc Kuberneters Cluster.
+- `name` (String) Name of the ViettelIdc Kubernetes Add-on.
+- `version` (String) Version of ViettelIdc Kubernetes Add-on.
 
 ### Read-Only
 
-- `status` (String) The current status of Viettel Kubernetes Add-on. Valid values: `ACTIVE`, `INACTIVE`, `INSTALLING`, `UNINSTALLING`.
+- `status` (String) The current status of ViettelIdc Kubernetes Add-on. Valid values: `ACTIVE`, `INACTIVE`, `INSTALLING`, `UNINSTALLING`.
