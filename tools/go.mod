@@ -7,6 +7,8 @@ require (
 	github.com/hashicorp/terraform-plugin-docs v0.19.4
 )
 
+require github.com/hashicorp/hc-install v0.7.0 // indirect
+
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.6 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect

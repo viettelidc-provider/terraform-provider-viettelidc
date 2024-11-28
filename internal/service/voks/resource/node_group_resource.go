@@ -89,32 +89,32 @@ func (n *nodeGroupResource) Schema(ctx context.Context, request resource.SchemaR
 		Description: "Collection of nodes in a ViettelIdc Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.Int32Attribute{
-				Description: "Id of the VettelIdc Kuberneters Cluster.",
+				Description: "Id of the Cluster.",
 				Computed: true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
 				},
 			},
 			"cluster_id": schema.Int32Attribute{
-				Description: "The ID of the Cluster into which you want to create one or more node groups.",
+				Description: "The ID of the Cluster into which you want to create one or more Node Groups.",
 				Required: true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.RequiresReplace(),
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "Name of the VettelIdc Kuberneters Cluster.",
+				Description: "Name of the Cluster.",
 				Required: true,
 			},
 			"resource_type": schema.StringAttribute{
-				Description: "Instance type associated with the ViettelIdc Node Group.",
+				Description: "Instance type associated with the Node Group.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"auto_repair": schema.BoolAttribute{
-				Description: "Default to `false`. Set it to `true` help keep the nodes in your ViettelIdc Kubernetes cluster in a healthy, running state.",
+				Description: "Default to `false`. Set it to `true` help keep the nodes in your cluster in a healthy, running state.",
 				Optional: true,
 				Computed: true,
 				Default:  booldefault.StaticBool(false),
@@ -128,7 +128,7 @@ func (n *nodeGroupResource) Schema(ctx context.Context, request resource.SchemaR
 				},
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of ViettelIdc Kubernetes Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.",
+				Description: "The current status of Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.",
 				Computed: true,
 			},
 		},
@@ -151,7 +151,7 @@ func (n *nodeGroupResource) Schema(ctx context.Context, request resource.SchemaR
 				},
 			},
 			"taint": schema.ListNestedBlock{
-				Description: "The Kubernetes taints to be applied to the nodes in the Node Group.",
+				Description: "The taints to be applied to the nodes in the Node Group.",
 				NestedObject: schema.NestedBlockObject{					
 					Attributes: map[string]schema.Attribute{
 						"key": schema.StringAttribute{

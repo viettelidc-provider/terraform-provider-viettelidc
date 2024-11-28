@@ -3,12 +3,12 @@
 page_title: "viettelidc Provider"
 subcategory: ""
 description: |-
-  Interact with Viettel Kubernetes.
+  Interact with ViettelIdc resource.
 ---
 
 # viettelidc Provider
 
-Interact with Viettel Kubernetes.
+Interact with ViettelIdc resource.
 
 ## Example Usage
 
@@ -27,8 +27,7 @@ provider "viettelidc" {
 
 ### Optional
 
-- `domain_id` (String) DomainId for Viettel Kubernetes API.
-- `host` (String)
-- `mfa_code` (String) Muti-factor Authentication code for Viettel Kubernetes API.
-- `password` (String) Password for Viettel Kubernetes API.
-- `username` (String) Username for Viettel Kubernetes API.
+- `domain_id` (String) DomainId for ViettelIdc API.
+- `mfa_code` (String) Muti-factor Authentication code for ViettelIdc API.
+- `password` (String) Password for ViettelIdc API.
+- `username` (String) Username for ViettelIdc API.

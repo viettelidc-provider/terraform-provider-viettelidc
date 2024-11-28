@@ -70,28 +70,28 @@ func (a *addonResource) Schema(ctx context.Context, request resource.SchemaReque
 		Description: "Manage a Kubernetes Add-on resource within ViettelIdc.",
 		Attributes: map[string]schema.Attribute{
 			"cluster_id": schema.Int32Attribute{
-				Description: "Id of the ViettelIdc Kuberneters Cluster.",
+				Description: "Id of the Cluster.",
 				Required: true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.RequiresReplace(),
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "Name of the ViettelIdc Kubernetes Add-on.",
+				Description: "Name of the Add-on.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"version": schema.StringAttribute{
-				Description: "Version of ViettelIdc Kubernetes Add-on.",
+				Description: "Version of Add-on.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of ViettelIdc Kubernetes Add-on. Valid values: `ACTIVE`, `INACTIVE`, `INSTALLING`, `UNINSTALLING`.",
+				Description: "The current status of Add-on. Valid values: `ACTIVE`, `INACTIVE`, `INSTALLING`, `UNINSTALLING`.",
 				Computed: true,
 			},
 		},

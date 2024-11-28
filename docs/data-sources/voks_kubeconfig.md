@@ -14,7 +14,7 @@ The configuration for accessing the cluster.
 
 ```terraform
 data "viettelidc_voks_kubeconfig" "example" {
-  clusterId = 456
+  cluster_id = 456
 }
 ```
 
@@ -23,7 +23,7 @@ data "viettelidc_voks_kubeconfig" "example" {
 
 ### Required
 
-- `cluster_id` (Number) Id of the ViettelIdc Kuberneters Cluster.
+- `cluster_id` (Number) Id of the Cluster.
 
 ### Read-Only
 

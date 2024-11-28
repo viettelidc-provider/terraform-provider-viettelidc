@@ -42,7 +42,6 @@ type viettelidcProvider struct {
 }
 
 type viettelidcProviderModel struct {
-	Host     types.String `tfsdk:"host"`
 	DomainId types.String `tfsdk:"domain_id"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
@@ -58,25 +57,22 @@ func (p *viettelidcProvider) Metadata(_ context.Context, _ provider.MetadataRequ
 // Schema defines the provider-level schema for configuration data.
 func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Interact with Viettel Kubernetes.",
+		Description: "Interact with ViettelIdc resource.",
 		Attributes: map[string]schema.Attribute{
-			"host": schema.StringAttribute{
-				Optional: true,
-			},
 			"domain_id": schema.StringAttribute{
-				Description: "DomainId for Viettel Kubernetes API.",
+				Description: "DomainId for ViettelIdc API.",
 				Optional:    true,
 			},
 			"username": schema.StringAttribute{
-				Description: "Username for Viettel Kubernetes API.",
+				Description: "Username for ViettelIdc API.",
 				Optional:    true,
 			},
 			"password": schema.StringAttribute{
-				Description: "Password for Viettel Kubernetes API.",
+				Description: "Password for ViettelIdc API.",
 				Optional:    true,
 			},
 			"mfa_code": schema.StringAttribute{
-				Description: "Muti-factor Authentication code for Viettel Kubernetes API.",
+				Description: "Muti-factor Authentication code for ViettelIdc API.",
 				Optional:    true,
 			},
 		},
@@ -145,10 +141,6 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	password := os.Getenv("VIETTELIDC_PASSWORD")
 	mfaCode := os.Getenv("VIETTELIDC_MFA_CODE")
 
-	if !config.Host.IsNull() {
-		host = config.Host.ValueString()
-	}
-
 	if !config.DomainId.IsNull() {
 		domainId = config.DomainId.ValueString()
 	}
@@ -169,7 +161,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	// errors with provider-specific guidance.
 
 	if host == "" {
-		host = "https://cmp.viettelidc.com.vn"
+		host = "https://api.viettelidc.com.vn"
 	}
 
 	if domainId == "" {

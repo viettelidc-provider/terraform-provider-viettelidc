@@ -86,35 +86,35 @@ func (c *clusterResource) Metadata(ctx context.Context, request resource.Metadat
 func (c *clusterResource) Schema(ctx context.Context, request resource.SchemaRequest, response *resource.SchemaResponse) {
 	//Generate fully response schema from ClusterResourceModel
 	response.Schema = schema.Schema{
-		Description: "Manage a cluster resource within ViettelIdc.",
+		Description: "Manage a Kubernetes Cluster resource within ViettelIdc.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.Int32Attribute{
-				Description: "Id of the VettelIdc Kuberneters Cluster.",
+				Description: "Id of the Cluster.",
 				Computed: true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "Name of the VettelIdc Kuberneters Cluster.",
+				Description: "Name of the Cluster.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"status": schema.StringAttribute{
-				Description: "The current status of ViettelIdc Kubernetes Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.",
+				Description: "The current status of Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.",
 				Computed: true,
 			},
 			"version": schema.StringAttribute{
-				Description: "Version of ViettelIdc Kubernetes Cluster.",
+				Description: "Version of Cluster.",
 				Required: true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"endpoint": schema.StringAttribute{
-				Description: "Endpoint for your ViettelIdc Kuberneters API server.",
+				Description: "Endpoint for your API server.",
 				Computed: true,
 			},
 			"nfs": schema.SingleNestedAttribute{
@@ -139,11 +139,11 @@ func (c *clusterResource) Schema(ctx context.Context, request resource.SchemaReq
 						Optional: true,
 					},
 					"status": schema.StringAttribute{
-						Description: "Status of ViettelIdc Kubernetes Cluster NFS Storage. When the NFS Storage is present in Terraform, its status will always be `POWER_ON`. Valid values: `POWER_ON`, `UPDATING`, `ERROR`.",
+						Description: "Status of Cluster NFS Storage. When the NFS Storage is present in Terraform, its status will always be `POWER_ON`. Valid values: `POWER_ON`, `UPDATING`, `ERROR`.",
 						Computed: true,
 					},
 					"ip_address": schema.StringAttribute{
-						Description: "Internal IP of NFS server that can be accessed by internal network of your ViettelIdc Kubernetes Cluster.",
+						Description: "Internal IP of NFS server that can be accessed by internal network of your Cluster.",
 						Computed: true,
 					},
 				},

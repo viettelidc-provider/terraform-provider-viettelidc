@@ -1,4 +1,3 @@
-
 # Example Usage
 data "viettelidc_voks_addon" "example" {
   cluster_id = 456

@@ -12,10 +12,6 @@ require (
 	github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.0
 )
 
-//replace github.com/viettelidc-provider/viettelidc-api-client-go => ../viettelidc-api-client-go
-//replace github.com/viettelidc-provider/viettelidc-api-client-go/service/iam => ../viettelidc-api-client-go/service/iam
-//replace github.com/viettelidc-provider/viettelidc-api-client-go/service/voks => ../viettelidc-api-client-go/service/voks
-
 require (
 	github.com/ProtonMail/go-crypto v1.1.0-alpha.2 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect

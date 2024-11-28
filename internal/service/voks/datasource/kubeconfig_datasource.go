@@ -60,7 +60,7 @@ func (k *kubeconfigDatasource) Schema(ctx context.Context, request datasource.Sc
 		Description: "The configuration for accessing the cluster.",
 		Attributes: map[string]schema.Attribute{
 			"cluster_id": schema.Int32Attribute{
-				Description: "Id of the ViettelIdc Kuberneters Cluster.",
+				Description: "Id of the Cluster.",
 				Required: true,
 			},
 			"value": schema.StringAttribute{
