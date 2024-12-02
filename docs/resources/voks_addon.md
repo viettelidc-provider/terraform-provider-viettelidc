@@ -14,7 +14,7 @@ Manage a Kubernetes Add-on resource within ViettelIdc.
 
 ```terraform
 # Example Usage
-data "viettelidc_voks_addon" "example" {
+resource "viettelidc_voks_addon" "example" {
   cluster_id = 456
   name       = "coredns"
   version    = "v1.10.1-eksbuild.1"
