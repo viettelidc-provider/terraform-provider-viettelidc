@@ -90,61 +90,61 @@ func (c *clusterResource) Schema(ctx context.Context, request resource.SchemaReq
 		Attributes: map[string]schema.Attribute{
 			"id": schema.Int32Attribute{
 				Description: "Id of the Cluster.",
-				Computed: true,
+				Computed:    true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
 				Description: "Name of the Cluster.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.",
-				Computed: true,
+				Computed:    true,
 			},
 			"version": schema.StringAttribute{
 				Description: "Version of Cluster.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"endpoint": schema.StringAttribute{
-				Description: "Endpoint for your API server.",
-				Computed: true,
+				Description: "Endpoint is IP address and port number that define the backend pods associated with a vOKS service.",
+				Computed:    true,
 			},
 			"nfs": schema.SingleNestedAttribute{
 				Description: "NFS storage enables multiple nodes in the cluster to access the same file system over a network.",
-				Optional: true,
-				Computed: true,
+				Optional:    true,
+				Computed:    true,
 				Attributes: map[string]schema.Attribute{
 					"cpu": schema.Float64Attribute{
 						Description: "The CPU size of NFS server.",
-						Computed: true,
+						Computed:    true,
 					},
 					"memory": schema.Float64Attribute{
 						Description: "The memory size of NFS server.",
-						Computed: true,
+						Computed:    true,
 					},
 					"total_storage_size": schema.Float64Attribute{
 						Description: "The size allocated for NFS volumes.",
-						Computed: true,
+						Computed:    true,
 					},
 					"additional_storage_size": schema.Int32Attribute{
 						Description: "The additional storage allocated for NFS volumes.",
-						Optional: true,
+						Optional:    true,
 					},
 					"status": schema.StringAttribute{
 						Description: "Status of Cluster NFS Storage. When the NFS Storage is present in Terraform, its status will always be `POWER_ON`. Valid values: `POWER_ON`, `UPDATING`, `ERROR`.",
-						Computed: true,
+						Computed:    true,
 					},
 					"ip_address": schema.StringAttribute{
 						Description: "Internal IP of NFS server that can be accessed by internal network of your Cluster.",
-						Computed: true,
+						Computed:    true,
 					},
 				},
 			},
@@ -155,7 +155,7 @@ func (c *clusterResource) Schema(ctx context.Context, request resource.SchemaReq
 				Attributes: map[string]schema.Attribute{
 					"vpc_id": schema.Int32Attribute{
 						Description: "ID of the VPC associated with your cluster.",
-						Required: true,
+						Required:    true,
 						PlanModifiers: []planmodifier.Int32{
 							int32planmodifier.RequiresReplace(),
 						},
@@ -241,9 +241,7 @@ func (c *clusterResource) Read(ctx context.Context, request resource.ReadRequest
 		return
 	}
 
-	cluster, _, err := c.client.ClusterApi.DetailCluster(ctx, voks.BaseResourceReq{
-		ClusterId: state.ID.ValueInt32(),
-	})
+	cluster, _, err := c.client.ClusterApi.DetailCluster(ctx, state.ID.ValueInt32())
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Error reading Cluster detail",
@@ -257,7 +255,7 @@ func (c *clusterResource) Read(ctx context.Context, request resource.ReadRequest
 	state.Version = types.StringValue(cluster.Version)
 	state.Endpoint = types.StringValue(cluster.ApiAddress)
 	state.VpcConfig = &VpcConfigBlock{
-		VpcId: types.Int32Value(cluster.VpcId),
+		VpcId: types.Int32Value(cluster.VpcConfig.VpcId),
 	}
 
 	nfs, _, err := c.client.NFSApi.DetailNfsStorage(ctx, voks.BaseResourceReq{
@@ -393,9 +391,7 @@ func (c *clusterResource) Update(ctx context.Context, request resource.UpdateReq
 	}
 
 	// Update cluster detail
-	cluster, _, err := c.client.ClusterApi.DetailCluster(ctx, voks.BaseResourceReq{
-		ClusterId: state.ID.ValueInt32(),
-	})
+	cluster, _, err := c.client.ClusterApi.DetailCluster(ctx, state.ID.ValueInt32())
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Error reading Cluster detail",
@@ -408,7 +404,7 @@ func (c *clusterResource) Update(ctx context.Context, request resource.UpdateReq
 	plan.Version = types.StringValue(cluster.Version)
 	plan.Endpoint = types.StringValue(cluster.ApiAddress)
 	plan.VpcConfig = &VpcConfigBlock{
-		VpcId: types.Int32Value(cluster.VpcId),
+		VpcId: types.Int32Value(cluster.VpcConfig.VpcId),
 	}
 
 	response.Diagnostics.Append(response.State.Set(ctx, &plan)...)

@@ -71,28 +71,28 @@ func (a *addonResource) Schema(ctx context.Context, request resource.SchemaReque
 		Attributes: map[string]schema.Attribute{
 			"cluster_id": schema.Int32Attribute{
 				Description: "Id of the Cluster.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.RequiresReplace(),
 				},
 			},
 			"name": schema.StringAttribute{
 				Description: "Name of the Add-on.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"version": schema.StringAttribute{
 				Description: "Version of Add-on.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of Add-on. Valid values: `ACTIVE`, `INACTIVE`, `INSTALLING`, `UNINSTALLING`.",
-				Computed: true,
+				Computed:    true,
 			},
 		},
 	}
@@ -107,10 +107,7 @@ func (a *addonResource) Create(ctx context.Context, request resource.CreateReque
 		return
 	}
 
-	exitingAddon, _, err := a.client.AddOnApi.GetDetailAddon(ctx, voks.GetDetailAddonRequest{
-		ClusterId: plan.ClusterId.ValueInt32(),
-		Name:      plan.Name.ValueString(),
-	})
+	exitingAddon, _, err := a.client.AddOnApi.GetDetailAddon(ctx, plan.ClusterId.ValueInt32(), plan.Name.ValueString())
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Error validating Cluster Addon status",
@@ -139,10 +136,7 @@ func (a *addonResource) Create(ctx context.Context, request resource.CreateReque
 	}
 
 	for {
-		detailRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, voks.GetDetailAddonRequest{
-			ClusterId: plan.ClusterId.ValueInt32(),
-			Name:      plan.Name.ValueString(),
-		})
+		detailRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, plan.ClusterId.ValueInt32(), plan.Name.ValueString())
 		if err != nil {
 			response.Diagnostics.AddError(
 				"Error updating Cluster Addon status",
@@ -173,10 +167,7 @@ func (a *addonResource) Read(ctx context.Context, request resource.ReadRequest, 
 		return
 	}
 
-	addonRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, voks.GetDetailAddonRequest{
-		ClusterId: state.ClusterId.ValueInt32(),
-		Name:      state.Name.ValueString(),
-	})
+	addonRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, state.ClusterId.ValueInt32(), state.Name.ValueString())
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Error reading Cluster Addon detail",
@@ -245,10 +236,7 @@ func (a *addonResource) Delete(ctx context.Context, request resource.DeleteReque
 	}
 
 	for {
-		detailRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, voks.GetDetailAddonRequest{
-			ClusterId: state.ClusterId.ValueInt32(),
-			Name:      state.Name.ValueString(),
-		})
+		detailRes, _, err := a.client.AddOnApi.GetDetailAddon(ctx, state.ClusterId.ValueInt32(), state.Name.ValueString())
 		if err != nil {
 			response.Diagnostics.AddError(
 				"Error updating Cluster Addon status",

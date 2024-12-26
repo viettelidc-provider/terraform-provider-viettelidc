@@ -89,35 +89,35 @@ func (n *nodeGroupResource) Schema(ctx context.Context, request resource.SchemaR
 		Description: "Collection of nodes in a ViettelIdc Kubernetes cluster that share similar configuration, typically based on their hardware, instance type.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.Int32Attribute{
-				Description: "Id of the Cluster.",
-				Computed: true,
+				Description: "Id of the Node Group.",
+				Computed:    true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.UseStateForUnknown(),
 				},
 			},
 			"cluster_id": schema.Int32Attribute{
 				Description: "The ID of the Cluster into which you want to create one or more Node Groups.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.Int32{
 					int32planmodifier.RequiresReplace(),
 				},
 			},
 			"name": schema.StringAttribute{
-				Description: "Name of the Cluster.",
-				Required: true,
+				Description: "Name of the Node Group.",
+				Required:    true,
 			},
 			"resource_type": schema.StringAttribute{
 				Description: "Instance type associated with the Node Group.",
-				Required: true,
+				Required:    true,
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"auto_repair": schema.BoolAttribute{
 				Description: "Default to `false`. Set it to `true` help keep the nodes in your cluster in a healthy, running state.",
-				Optional: true,
-				Computed: true,
-				Default:  booldefault.StaticBool(false),
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
 			},
 			"labels": schema.MapAttribute{
 				Description: "Key/value pairs attached to objects like Pods. They specify identifying attributes meaningfull to users but do not imply semantics to the core system.",
@@ -129,48 +129,48 @@ func (n *nodeGroupResource) Schema(ctx context.Context, request resource.SchemaR
 			},
 			"status": schema.StringAttribute{
 				Description: "The current status of Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.",
-				Computed: true,
+				Computed:    true,
 			},
 		},
-		Blocks: map[string]schema.Block{			
+		Blocks: map[string]schema.Block{
 			"scaling_config": schema.SingleNestedBlock{
 				Description: "Configuration required by the cluster autoscaler to adjust the size of the node group based on current cluster usage.",
 				Attributes: map[string]schema.Attribute{
 					"enable_auto_scale": schema.BoolAttribute{
 						Description: "Default to `false`. Set it to `true` can scale automatically.",
-						Required: true,
+						Required:    true,
 					},
 					"max_node": schema.Int32Attribute{
 						Description: "Maximum number of nodes in the Node Group. `max_size` need to be greater than or equal 1 and less than or equal to 10 and greater than or equal to `min_size`.",
-						Required: true,
+						Required:    true,
 					},
 					"min_node": schema.Int32Attribute{
 						Description: "Minimum number of nodes in the Node Group. `min_size` need to be greater than or equal 1 and less than or equal to 10 and less than or equal to `max_size`.",
-						Required: true,
+						Required:    true,
 					},
 				},
 			},
 			"taint": schema.ListNestedBlock{
 				Description: "The taints to be applied to the nodes in the Node Group.",
-				NestedObject: schema.NestedBlockObject{					
+				NestedObject: schema.NestedBlockObject{
 					Attributes: map[string]schema.Attribute{
 						"key": schema.StringAttribute{
 							Description: "The key for the taint. Must be be 63 characters or less, using letters (a-z, A-Z), numbers (0-9), hyphen (-), underscores (_), and periods (.). Must start and end with a letter, number, or underscore.",
-							Required: true,
+							Required:    true,
 							PlanModifiers: []planmodifier.String{
 								stringplanmodifier.RequiresReplace(),
 							},
 						},
 						"value": schema.StringAttribute{
 							Description: "The value for the taint. Must be be 63 characters or less, using letters (a-z, A-Z), numbers (0-9), hyphen (-), underscores (_), and periods (.). Must start and end with a letter, number, or underscore",
-							Required: true,
+							Required:    true,
 							PlanModifiers: []planmodifier.String{
 								stringplanmodifier.RequiresReplace(),
 							},
 						},
 						"effect": schema.StringAttribute{
 							Description: "The effect of the taint, Valid values: `NoSchedule`, `NoExecute`, `PreferNoSchedule`.",
-							Required: true,
+							Required:    true,
 							PlanModifiers: []planmodifier.String{
 								stringplanmodifier.RequiresReplace(),
 							},
@@ -238,10 +238,7 @@ func (n *nodeGroupResource) Create(ctx context.Context, request resource.CreateR
 	}
 
 	for {
-		detail, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, voks.DetailNodeGroupRequest{
-			Id:        resBody.Id,
-			ClusterId: resBody.ClusterId,
-		})
+		detail, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, resBody.ClusterId, resBody.Id)
 		if err != nil {
 			response.Diagnostics.AddError(
 				"Error updating Cluster Node Group status",
@@ -310,10 +307,7 @@ func (n *nodeGroupResource) Read(ctx context.Context, request resource.ReadReque
 		return
 	}
 
-	detail, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, voks.DetailNodeGroupRequest{
-		ClusterId: state.ClusterId.ValueInt32(),
-		Id:        state.ID.ValueInt32(),
-	})
+	detail, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, state.ClusterId.ValueInt32(), state.ID.ValueInt32())
 	if err != nil {
 		response.Diagnostics.AddError(
 			"Error reading Cluster Node Group detail",
@@ -391,10 +385,7 @@ func (n *nodeGroupResource) Update(ctx context.Context, request resource.UpdateR
 
 	for {
 		//refresh status util is success
-		detailRes, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, voks.DetailNodeGroupRequest{
-			ClusterId: updateRes.ClusterId,
-			Id:        updateRes.Id,
-		})
+		detailRes, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, updateRes.ClusterId, updateRes.Id)
 		if err != nil {
 			response.Diagnostics.AddError(
 				"Error updating Cluster Node Group status",
@@ -450,9 +441,7 @@ func (n *nodeGroupResource) Delete(ctx context.Context, request resource.DeleteR
 
 	// Check status of cluster
 	for {
-		detailCluster, _, err := n.client.ClusterApi.DetailCluster(ctx, voks.BaseResourceReq{
-			ClusterId: state.ClusterId.ValueInt32(),
-		})
+		detailCluster, _, err := n.client.ClusterApi.DetailCluster(ctx, state.ClusterId.ValueInt32())
 		if err != nil {
 			response.Diagnostics.AddError(
 				"Error updating Cluster status",
@@ -473,10 +462,7 @@ func (n *nodeGroupResource) Delete(ctx context.Context, request resource.DeleteR
 	}
 
 	// Check status of deleted node group
-	detailNodeGroup, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, voks.DetailNodeGroupRequest{
-		ClusterId: state.ClusterId.ValueInt32(),
-		Id:        state.ClusterId.ValueInt32(),
-	})
+	detailNodeGroup, _, err := n.client.NodeGroupApi.DetailNodeGroup(ctx, state.ClusterId.ValueInt32(), state.ClusterId.ValueInt32())
 	if err != nil {
 		// If node group is not found, it means it was deleted successfully
 	} else {

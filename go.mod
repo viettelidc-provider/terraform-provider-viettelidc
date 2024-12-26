@@ -3,19 +3,19 @@ module terraform-provider-viettelidc
 go 1.23.2
 
 require (
+	github.com/antihax/optional v1.0.0
 	github.com/hashicorp/terraform-plugin-framework v1.13.0
 	github.com/hashicorp/terraform-plugin-go v0.25.0
 	github.com/hashicorp/terraform-plugin-log v0.9.0
 	github.com/hashicorp/terraform-plugin-testing v1.10.0
 	github.com/viettelidc-provider/viettelidc-api-client-go v1.0.0
 	github.com/viettelidc-provider/viettelidc-api-client-go/service/iam v1.0.0
-	github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.0
+	github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.1
 )
 
 require (
 	github.com/ProtonMail/go-crypto v1.1.0-alpha.2 // indirect
 	github.com/agext/levenshtein v1.2.2 // indirect
-	github.com/antihax/optional v1.0.0 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/cloudflare/circl v1.3.7 // indirect
 	github.com/fatih/color v1.16.0 // indirect

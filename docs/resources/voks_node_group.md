@@ -115,7 +115,7 @@ resource "viettelidc_voks_node_group" "example" {
 ### Required
 
 - `cluster_id` (Number) The ID of the Cluster into which you want to create one or more Node Groups.
-- `name` (String) Name of the Cluster.
+- `name` (String) Name of the Node Group.
 - `resource_type` (String) Instance type associated with the Node Group.
 
 ### Optional
@@ -127,7 +127,7 @@ resource "viettelidc_voks_node_group" "example" {
 
 ### Read-Only
 
-- `id` (Number) Id of the Cluster.
+- `id` (Number) Id of the Node Group.
 - `status` (String) The current status of Node Group. Valid values: `CREATING`, `UPDATING`, `SUCCESS`, `ERROR`.
 
 <a id="nestedblock--scaling_config"></a>

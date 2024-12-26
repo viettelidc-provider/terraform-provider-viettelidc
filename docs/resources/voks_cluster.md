@@ -54,7 +54,7 @@ resource "viettelidc_voks_cluster" "example" {
 
 ### Read-Only
 
-- `endpoint` (String) Endpoint for your API server.
+- `endpoint` (String) Endpoint is IP address and port number that define the backend pods associated with a vOKS service.
 - `id` (Number) Id of the Cluster.
 - `status` (String) The current status of Cluster. Valid values: `POWER_ON`, `POWER_OFF`, `ERROR`.
 

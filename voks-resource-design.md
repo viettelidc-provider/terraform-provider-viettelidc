@@ -24,6 +24,8 @@ resource "viettelidc_voks_cluster" "cluster" {
 data "viettelidc_voks_cluster" "cluster" {
   
   id = "56231"
+  
+  #Attribute Reference
   name = "k8s-cluster"
   status = "SUCCESS" 
   version = "1.8.0"
@@ -33,7 +35,6 @@ data "viettelidc_voks_cluster" "cluster" {
     cpu = 4
     ram = 4
     total_storage_size = 240
-    additional_storage_size = 20 //Optional
     status = power_on
     ip_address = 10.13.78.238
   }
@@ -46,6 +47,26 @@ data "viettelidc_voks_cluster" "cluster" {
   
   created_at = "2024-01-01 00:00:00"
   updated_at = "2024-01-01 00:00:00"
+}
+```
+
+```terraform
+data "viettelidc_voks_clusters" "clusters" {
+   
+  region_id = 123
+  filter {
+    name = "k8s-cluster"
+  }
+  
+  #Attribute Reference
+  ids = [
+    "1231",
+    "1232"
+  ]
+  names = [
+    "k8s-cluster",
+    "k8s-cluster-2"
+  ]
 }
 ```
 
@@ -99,20 +120,13 @@ resource "viettelidc_voks_node_group" "node-group" {
 resource "viettelidc_voks_node_group" "node-group" {
   
   id = "1231"
+  cluster_id = "1231"
+  
+  #Attribute Reference
   cluster_name = "k8s-cluster"
   name = "k8s-node-group"
   instance_type = "T1.vOKS 1"
-  nfs_size = 20
-  nic_ids = ["3213", "8172"]
   status = "SUCCESS"
-  
-  nodes = [{
-    node_name = "worker-7bscd"
-    type = "WORKER"
-    instance_type = "2 vCPU - 4GB RAM - 50GB SSD"
-    start_time = "2024-01-01 00:00:00"
-    end_time = "2024-01-01 23:00:00"
-  }]
 
   scaling_config {
     enable_auto_scale = true
@@ -141,21 +155,52 @@ resource "viettelidc_voks_node_group" "node-group" {
 
 ```terraform
 resource "viettelidc_voks_addon" "addon" {
-  cluster_name                = viettelidc_voks_cluster.cluster.name
+  cluster_id                = "1234"
   addon_name                  = "coredns"
   addon_version               = "v1.10.1-eksbuild.1"
-  resolve_conflicts_on_update = "PRESERVE"
 }
 ```
 
 2. **Data sources**
 
 ```terraform
-resource "viettelidc_voks_addon" "addon" {
-  cluster_name                = viettelidc_voks_cluster.cluster.name
+data "viettelidc_voks_addon" "addon" {
+  cluster_id                = "1234"
   addon_name                  = "coredns"
   addon_version               = "v1.10.1-eksbuild.1"
-  resolve_conflicts_on_update = "PRESERVE"
   status = "SUCCESS"
+}
+```
+
+```terraform
+data "viettelidc_voks_addons" "addons" {
+  
+  kubernetes_version = "1.10.1"
+  filter {
+    name = "dashboard"
+  }
+  
+  #Attribute Reference
+  names = [
+    "coredns",
+    "dashboard"
+  ]
+}
+```
+
+```terraform
+data "viettelidc_voks_addon_versions" "addon_versions" {
+    
+  name = "dashboard"
+  kubernetes_version = "1.10.1"
+  filter {
+    version = "v1.10.1-eksbuild.1"
+  }
+  
+  #Attribute Reference
+  versions = [
+    "v1.10.1-eksbuild.1",
+    "v1.10.1-eksbuild.2"
+  ]
 }
 ```
