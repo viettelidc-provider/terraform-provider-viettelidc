@@ -5,11 +5,13 @@ package provider
 
 import (
 	"context"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/service/iam"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
 	"os"
 	voksDatasource "terraform-provider-viettelidc/internal/service/voks/datasource"
 	voksResource "terraform-provider-viettelidc/internal/service/voks/resource"
+	vpcDatasource "terraform-provider-viettelidc/internal/service/vpc/datasource"
+
+	"github.com/viettelidc-provider/viettelidc-api-client-go/service/iam"
+	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -177,7 +179,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	if username == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("username"),
-			"Missing Viettelidc API DomainId",
+			"Missing Viettelidc API Username",
 			"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API username. "+
 				"Set the username value in the configuration or use the VIETTELIDC_USERNAME environment variable. "+
 				"If either is already set, ensure the value is not empty.",
@@ -187,7 +189,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	if password == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("password"),
-			"Missing Viettelidc API Username",
+			"Missing Viettelidc API Password",
 			"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API password. "+
 				"Set the password value in the configuration or use the VIETTELIDC_PASSWORD environment variable. "+
 				"If either is already set, ensure the value is not empty.",
@@ -278,6 +280,9 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 // DataSources defines the data sources implemented in the provider.
 func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		vpcDatasource.NewVpcsDatasource,
+		vpcDatasource.NewVpcDatasource,
+		vpcDatasource.NewVpcQuotaLimitDatasource,
 		voksDatasource.NewClusterDataSource,
 		voksDatasource.NewKubeconfigResource,
 		voksDatasource.NewNodeGroupDatasource,

@@ -1,6 +1,6 @@
 module terraform-provider-viettelidc
 
-go 1.23.2
+go 1.24.4
 
 require (
 	github.com/antihax/optional v1.0.0
@@ -11,7 +11,10 @@ require (
 	github.com/viettelidc-provider/viettelidc-api-client-go v1.0.0
 	github.com/viettelidc-provider/viettelidc-api-client-go/service/iam v1.0.0
 	github.com/viettelidc-provider/viettelidc-api-client-go/service/voks v1.0.1
+	github.com/viettelidc-provider/viettelidc-api-client-go/service/vpc v1.0.0
 )
+
+replace github.com/viettelidc-provider/viettelidc-api-client-go/service/vpc => ../codegen/gen/vpc
 
 require (
 	github.com/ProtonMail/go-crypto v1.1.0-alpha.2 // indirect
@@ -40,7 +43,7 @@ require (
 	github.com/hashicorp/terraform-registry-address v0.2.3 // indirect
 	github.com/hashicorp/terraform-svchost v0.1.1 // indirect
 	github.com/hashicorp/yamux v0.1.1 // indirect
-	github.com/kr/pretty v0.3.0 // indirect
+	github.com/kr/pretty v0.3.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
@@ -50,6 +53,7 @@ require (
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/oklog/run v1.0.0 // indirect
 	github.com/rogpeppe/go-internal v1.12.0 // indirect
+	github.com/stretchr/testify v1.9.0 // indirect
 	github.com/vmihailenco/msgpack v4.0.4+incompatible // indirect
 	github.com/vmihailenco/msgpack/v5 v5.4.1 // indirect
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
@@ -57,7 +61,7 @@ require (
 	golang.org/x/crypto v0.26.0 // indirect
 	golang.org/x/mod v0.19.0 // indirect
 	golang.org/x/net v0.28.0 // indirect
-	golang.org/x/oauth2 v0.24.0 // indirect
+	golang.org/x/oauth2 v0.30.0 // indirect
 	golang.org/x/sync v0.8.0 // indirect
 	golang.org/x/sys v0.24.0 // indirect
 	golang.org/x/text v0.17.0 // indirect
@@ -66,4 +70,5 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240814211410-ddb44dafa142 // indirect
 	google.golang.org/grpc v1.67.1 // indirect
 	google.golang.org/protobuf v1.35.1 // indirect
+	gopkg.in/check.v1 v1.0.0-20201130134442-10cb98267c6c // indirect
 )
