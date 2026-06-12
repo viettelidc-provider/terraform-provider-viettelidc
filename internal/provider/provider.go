@@ -50,6 +50,7 @@ type viettelidcProvider struct {
 
 type viettelidcProviderModel struct {
 	DomainId types.String `tfsdk:"domain_id"`
+	Email    types.String `tfsdk:"email"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
 	MfaCode  types.String `tfsdk:"mfa_code"`
@@ -72,8 +73,12 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Description: "DomainId for ViettelIdc API.",
 				Optional:    true,
 			},
+			"email": schema.StringAttribute{
+				Description: "Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.",
+				Optional:    true,
+			},
 			"username": schema.StringAttribute{
-				Description: "Username for ViettelIdc API.",
+				Description: "Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.",
 				Optional:    true,
 			},
 			"password": schema.StringAttribute{
@@ -99,11 +104,10 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 // Configure prepares a Viettelidc API client for data sources and resources.
 //
 // Auth strategy:
-//   - IaC resources (viettelidc_ovpc_*): always use username+password via
-//     IaC client's own LoginWithPassword flow (no domain_id required).
-//   - VOKS resources (voks_*): use IAM SDK login (domain_id required).
-//     If domain_id is not provided, VoksConfig will be nil and voks_*
-//     resources will return an error when accessed.
+//   - IaC resources (viettelidc_ovpc_*): use email+password (root user) via
+//     IaC client's own LoginWithPassword flow. Skipped when email is absent.
+//   - VOKS resources (voks_*): use username+password (IAM user) via IAM SDK
+//     login (domain_id required). Skipped when username or domain_id is absent.
 func (p *viettelidcProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var config viettelidcProviderModel
 	diags := req.Config.Get(ctx, &config)
@@ -113,11 +117,15 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	}
 
 	// ── Resolve config values with env-var fallbacks ─────────────────────────
+	email := os.Getenv("VIETTELIDC_EMAIL")
 	username := os.Getenv("VIETTELIDC_USERNAME")
 	password := os.Getenv("VIETTELIDC_PASSWORD")
 	domainId := os.Getenv("VIETTELIDC_DOMAIN_ID")
 	mfaCode := os.Getenv("VIETTELIDC_MFA_CODE")
 
+	if !config.Email.IsNull() && !config.Email.IsUnknown() {
+		email = config.Email.ValueString()
+	}
 	if !config.Username.IsNull() && !config.Username.IsUnknown() {
 		username = config.Username.ValueString()
 	}
@@ -144,11 +152,16 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 		iacVpcID = config.VpcID.ValueString()
 	}
 
-	if username == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("username"),
-			"Missing username",
-			"Set username in provider config or VIETTELIDC_USERNAME env var.",
+	if email != "" && username != "" {
+		resp.Diagnostics.AddError(
+			"Conflicting credentials",
+			"Provide either email (root user / IaC) or username+domain_id (IAM user / VOKS), not both.",
+		)
+	}
+	if email == "" && username == "" {
+		resp.Diagnostics.AddError(
+			"Missing credentials",
+			"Provide email (root user / IaC) or username+domain_id (IAM user / VOKS).",
 		)
 	}
 	if password == "" {
@@ -162,36 +175,36 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 		return
 	}
 
-	// ── IaC auth: LoginWithPassword (no domain_id needed) ────────────────────
-	oldToken, accessToken, err := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
-		Username: username,
-		Password: password,
-		UserType: "ROOT_USER",
-	})
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"IaC Login Failed",
-			"Could not authenticate with IaC API: "+err.Error(),
-		)
-		return
-	}
-
-	iacHTTPClient := iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
+	// ── IaC auth: email + password → root user (LoginWithPassword) ───────────
 	iacData := &iac_providerdata.ProviderData{
-		Client:       iacHTTPClient,
 		DefaultVpcID: iacVpcID,
 	}
+	if email != "" {
+		oldToken, accessToken, err := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
+			Username: email,
+			Password: password,
+			UserType: "ROOT_USER",
+		})
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"IaC Login Failed",
+				"Could not authenticate with IaC API: "+err.Error(),
+			)
+			return
+		}
+		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
 
-	// Auto-extract customer_id from the JWT when not set explicitly.
-	customerID := os.Getenv("VIETTELIDC_CUSTOMER_ID")
-	if extracted, err := iac_client.ExtractCustomerIDFromJWT(oldToken); err == nil && extracted != "" {
-		customerID = extracted
+		// Auto-extract customer_id from the JWT when not set explicitly.
+		customerID := os.Getenv("VIETTELIDC_CUSTOMER_ID")
+		if extracted, extractErr := iac_client.ExtractCustomerIDFromJWT(oldToken); extractErr == nil && extracted != "" {
+			customerID = extracted
+		}
+		iacData.CustomerID = customerID
 	}
-	iacData.CustomerID = customerID
 
-	// ── VOKS auth: IAM SDK (only when domain_id is present) ──────────────────
+	// ── VOKS auth: username + password → IAM user (IAM SDK, requires domain_id) ─
 	var voksConfig *viettelidc.Configuration
-	if domainId != "" {
+	if username != "" && domainId != "" {
 		voksHost := os.Getenv("VIETTELIDC_HOST")
 		if voksHost == "" {
 			voksHost = "https://api.viettelidc.com.vn"
@@ -242,6 +255,22 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 		configuration.CustomerId = accountRes.Data.CustomerId
 		iacData.CustomerID = configuration.CustomerId
 		voksConfig = configuration
+
+		// ── Also login to IaC API as IAM user so IaC resources are accessible ──
+		oldToken, accessToken, iacErr := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
+			Username: username,
+			Password: password,
+			UserType: "IAM_USER",
+			DomainId: domainId,
+		})
+		if iacErr != nil {
+			resp.Diagnostics.AddError(
+				"IaC Login Failed (IAM user)",
+				"Could not authenticate IAM user with IaC API: "+iacErr.Error(),
+			)
+			return
+		}
+		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
 	}
 
 	shared := &sharedpd.SharedProviderData{

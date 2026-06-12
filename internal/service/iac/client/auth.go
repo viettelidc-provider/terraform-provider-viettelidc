@@ -27,9 +27,10 @@ const (
 
 // LoginCredentials holds email/password for the direct login path.
 type LoginCredentials struct {
-	Username string // email, e.g. "alice@viettelidc.com.vn"
+	Username string // email (root user) or IAM username
 	Password string
-	UserType string // e.g. "ROOT_USER" (default used when empty)
+	UserType string // "ROOT_USER" (default) or "IAM_USER"
+	DomainId string // required for IAM_USER, ignored for ROOT_USER
 }
 
 func oauthExchange(ctx context.Context, httpClient *http.Client, baseURL, oldToken string) (string, error) {
@@ -88,9 +89,16 @@ func LoginWithPassword(ctx context.Context, httpClient *http.Client, baseURL str
 	}
 
 	body := map[string]interface{}{
-		"email":     c.Username,
 		"password":  c.Password,
 		"user_type": userType,
+	}
+	if userType == "IAM_USER" {
+		body["username"] = c.Username
+	} else {
+		body["email"] = c.Username
+	}
+	if c.DomainId != "" {
+		body["domain_id"] = c.DomainId
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {
