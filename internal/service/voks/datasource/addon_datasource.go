@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/viettelidc-provider/viettelidc-api-client-go/service/voks"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
+	sharedpd "terraform-provider-viettelidc/internal/providerdata"
 )
 
 var (
@@ -40,7 +40,7 @@ func (a *addonDatasource) Configure(ctx context.Context, request datasource.Conf
 		return
 	}
 
-	cfg, ok := request.ProviderData.(*viettelidc.Configuration)
+	shared, ok := request.ProviderData.(*sharedpd.SharedProviderData)
 	if !ok {
 		response.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
@@ -50,7 +50,7 @@ func (a *addonDatasource) Configure(ctx context.Context, request datasource.Conf
 		return
 	}
 
-	a.client = voks.NewAPIClient(*cfg)
+	a.client = voks.NewAPIClient(*shared.VoksConfig)
 }
 
 func (a *addonDatasource) Metadata(ctx context.Context, request datasource.MetadataRequest, response *datasource.MetadataResponse) {
