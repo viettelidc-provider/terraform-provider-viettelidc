@@ -5,11 +5,8 @@ package provider
 
 import (
 	"context"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/service/iam"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
+	"net/http"
 	"os"
-	voksDatasource "terraform-provider-viettelidc/internal/service/voks/datasource"
-	voksResource "terraform-provider-viettelidc/internal/service/voks/resource"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,6 +14,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/viettelidc-provider/viettelidc-api-client-go/service/iam"
+	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
+
+	iac_client "terraform-provider-viettelidc/internal/service/iac/client"
+	iac_providerdata "terraform-provider-viettelidc/internal/service/iac/providerdata"
+	iacNetworking "terraform-provider-viettelidc/internal/service/iac/networking"
+	iacVpc "terraform-provider-viettelidc/internal/service/iac/vpc"
+	sharedpd "terraform-provider-viettelidc/internal/providerdata"
+	voksDatasource "terraform-provider-viettelidc/internal/service/voks/datasource"
+	voksResource "terraform-provider-viettelidc/internal/service/voks/resource"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -43,9 +50,12 @@ type viettelidcProvider struct {
 
 type viettelidcProviderModel struct {
 	DomainId types.String `tfsdk:"domain_id"`
+	Email    types.String `tfsdk:"email"`
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
 	MfaCode  types.String `tfsdk:"mfa_code"`
+	BaseURL  types.String `tfsdk:"base_url"`
+	VpcID    types.String `tfsdk:"vpc_id"`
 }
 
 // Metadata returns the provider type name.
@@ -63,8 +73,12 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Description: "DomainId for ViettelIdc API.",
 				Optional:    true,
 			},
+			"email": schema.StringAttribute{
+				Description: "Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.",
+				Optional:    true,
+			},
 			"username": schema.StringAttribute{
-				Description: "Username for ViettelIdc API.",
+				Description: "Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.",
 				Optional:    true,
 			},
 			"password": schema.StringAttribute{
@@ -75,13 +89,26 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Description: "Muti-factor Authentication code for ViettelIdc API.",
 				Optional:    true,
 			},
+			"base_url": schema.StringAttribute{
+				Description: "IaC API Gateway base URL. Default: https://iac.viettelidc.com.vn. Env: VIETTELIDC_BASE_URL.",
+				Optional:    true,
+			},
+			"vpc_id": schema.StringAttribute{
+				Description: "Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.",
+				Optional:    true,
+			},
 		},
 	}
 }
 
 // Configure prepares a Viettelidc API client for data sources and resources.
+//
+// Auth strategy:
+//   - IaC resources (viettelidc_ovpc_*): use email+password (root user) via
+//     IaC client's own LoginWithPassword flow. Skipped when email is absent.
+//   - VOKS resources (voks_*): use username+password (IAM user) via IAM SDK
+//     login (domain_id required). Skipped when username or domain_id is absent.
 func (p *viettelidcProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
-	// Retrieve provider data from configuration
 	var config viettelidcProviderModel
 	diags := req.Config.Get(ctx, &config)
 	resp.Diagnostics.Append(diags...)
@@ -89,209 +116,233 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 		return
 	}
 
-	// If practitioner provided a configuration value for any of the
-	// attributes, it must be a known value.
-
-	if config.DomainId.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("username"),
-			"Unknown Viettelidc API DomainId",
-			"The provider cannot create the Viettelidc API client as there is an unknown configuration value for the Viettelidc API domain_id. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the VIETTELIDC_DOMAIN_ID environment variable.",
-		)
-	}
-
-	if config.Username.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("password"),
-			"Unknown Viettelidc API Username",
-			"The provider cannot create the Viettelidc API client as there is an unknown configuration value for the Viettelidc API username. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the VIETTELIDC_USERNAME environment variable.",
-		)
-	}
-
-	if config.Password.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("password"),
-			"Unknown Viettelidc API Username",
-			"The provider cannot create the Viettelidc API client as there is an unknown configuration value for the Viettelidc API password. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the VIETTELIDC_PASSWORD environment variable.",
-		)
-	}
-
-	if config.MfaCode.IsUnknown() {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("password"),
-			"Unknown Viettelidc API Username",
-			"The provider cannot create the Viettelidc API client as there is an unknown configuration value for the Viettelidc API MFA Code. "+
-				"Either target apply the source of the value first, set the value statically in the configuration, or use the VIETTELIDC_MFA_CODE environment variable.",
-		)
-	}
-
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	// Default values to environment variables, but override
-	// with Terraform configuration value if set.
-
-	host := os.Getenv("VIETTELIDC_HOST")
-	domainId := os.Getenv("VIETTELIDC_DOMAIN_ID")
+	// ── Resolve config values with env-var fallbacks ─────────────────────────
+	email := os.Getenv("VIETTELIDC_EMAIL")
 	username := os.Getenv("VIETTELIDC_USERNAME")
 	password := os.Getenv("VIETTELIDC_PASSWORD")
+	domainId := os.Getenv("VIETTELIDC_DOMAIN_ID")
 	mfaCode := os.Getenv("VIETTELIDC_MFA_CODE")
 
-	if !config.DomainId.IsNull() {
-		domainId = config.DomainId.ValueString()
+	if !config.Email.IsNull() && !config.Email.IsUnknown() {
+		email = config.Email.ValueString()
 	}
-
-	if !config.Username.IsNull() {
+	if !config.Username.IsNull() && !config.Username.IsUnknown() {
 		username = config.Username.ValueString()
 	}
-
-	if !config.Password.IsNull() {
+	if !config.Password.IsNull() && !config.Password.IsUnknown() {
 		password = config.Password.ValueString()
 	}
-
-	if !config.MfaCode.IsNull() {
+	if !config.DomainId.IsNull() && !config.DomainId.IsUnknown() {
+		domainId = config.DomainId.ValueString()
+	}
+	if !config.MfaCode.IsNull() && !config.MfaCode.IsUnknown() {
 		mfaCode = config.MfaCode.ValueString()
 	}
 
-	// If any of the expected configurations are missing, return
-	// errors with provider-specific guidance.
-
-	if host == "" {
-		host = "https://api.viettelidc.com.vn"
+	iacBaseURL := os.Getenv("VIETTELIDC_BASE_URL")
+	if iacBaseURL == "" {
+		iacBaseURL = "https://iac.viettelidc.com.vn"
+	}
+	if !config.BaseURL.IsNull() && !config.BaseURL.IsUnknown() {
+		iacBaseURL = config.BaseURL.ValueString()
 	}
 
-	if domainId == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("domain_id"),
-			"Missing Viettelidc API DomainId",
-			"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API domainId. "+
-				"Set the username value in the configuration or use the VIETTELIDC_DOMAIN_ID environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+	iacVpcID := os.Getenv("VIETTELIDC_VPC_ID")
+	if !config.VpcID.IsNull() && !config.VpcID.IsUnknown() {
+		iacVpcID = config.VpcID.ValueString()
+	}
+
+	if email != "" && username != "" {
+		resp.Diagnostics.AddError(
+			"Conflicting credentials",
+			"Provide either email (root user / IaC) or username+domain_id (IAM user / VOKS), not both.",
 		)
 	}
-
-	if username == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("username"),
-			"Missing Viettelidc API DomainId",
-			"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API username. "+
-				"Set the username value in the configuration or use the VIETTELIDC_USERNAME environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+	if email == "" && username == "" {
+		resp.Diagnostics.AddError(
+			"Missing credentials",
+			"Provide email (root user / IaC) or username+domain_id (IAM user / VOKS).",
 		)
 	}
-
 	if password == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("password"),
-			"Missing Viettelidc API Username",
-			"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API password. "+
-				"Set the password value in the configuration or use the VIETTELIDC_PASSWORD environment variable. "+
-				"If either is already set, ensure the value is not empty.",
+			"Missing password",
+			"Set password in provider config or VIETTELIDC_PASSWORD env var.",
 		)
 	}
-
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	configuration := &viettelidc.Configuration{
-		BasePath:      host,
-		DefaultHeader: make(map[string]string),
-		UserAgent:     "viettelidc/iac",
+	// ── IaC auth: email + password → root user (LoginWithPassword) ───────────
+	iacData := &iac_providerdata.ProviderData{
+		DefaultVpcID: iacVpcID,
 	}
-	iamAPIClient := iam.NewAPIClient(configuration)
-
-	loginRes, _, err := iamAPIClient.AuthorizationControllerApi.LoginViaLoginPage(ctx, iam.LoginViaLoginPageRequest{
-		Username:     username,
-		Password:     password,
-		DomainId:     domainId,
-		IsRememberMe: false,
-		UserType:     "IAM_USER",
-	})
-
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Viettelidc API Client",
-			"An unexpected error occurred when creating the Viettelidc API client. "+
-				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Viettelidc Client Error: "+err.Error(),
-		)
-		return
-	}
-
-	if loginRes.IsRequiredSecondAuthenticationStep {
-
-		if mfaCode == "" {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("mfa_code"),
-				"Missing Viettelidc API MfaCode",
-				"The provider cannot create the Viettelidc API client as there is a missing or empty value for the Viettelidc API mfaCode. "+
-					"Set the password value in the configuration or use the VIETTELIDC_MFA_CODE environment variable. "+
-					"If either is already set, ensure the value is not empty.",
-			)
-			return
-		}
-
-		exchangeTokenRes, _, err := iamAPIClient.AuthorizationControllerApi.VerifyMfaTokenCode(ctx, iam.LoginViaPageWithMfaCodeRequest{
-			MfaToken: loginRes.Data,
-			MfaCode:  mfaCode,
+	if email != "" {
+		oldToken, accessToken, err := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
+			Username: email,
+			Password: password,
+			UserType: "ROOT_USER",
 		})
 		if err != nil {
 			resp.Diagnostics.AddError(
-				"Unable to Create Viettelidc API Client",
-				"An unexpected error occurred when creating the Viettelidc API client. "+
-					"If the error is not clear, please contact the provider developers.\n\n"+
-					"Viettelidc Client Error: "+err.Error(),
+				"IaC Login Failed",
+				"Could not authenticate with IaC API: "+err.Error(),
 			)
 			return
 		}
-		configuration.AccessToken = exchangeTokenRes.Data
-	} else {
-		configuration.AccessToken = loginRes.Data
+		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
+
+		// Auto-extract customer_id from the JWT when not set explicitly.
+		customerID := os.Getenv("VIETTELIDC_CUSTOMER_ID")
+		if extracted, extractErr := iac_client.ExtractCustomerIDFromJWT(oldToken); extractErr == nil && extracted != "" {
+			customerID = extracted
+		}
+		iacData.CustomerID = customerID
 	}
 
-	accountRes, _, err := iamAPIClient.AccountClientApi.GetAccountInfoClient(ctx)
-	if err != nil {
-		resp.Diagnostics.AddError(
-			"Unable to Create Viettelidc API Client",
-			"An unexpected error occurred when creating the Viettelidc API client. "+
-				"If the error is not clear, please contact the provider developers.\n\n"+
-				"Viettelidc Client Error: "+err.Error(),
-		)
-		return
+	// ── VOKS auth: username + password → IAM user (IAM SDK, requires domain_id) ─
+	var voksConfig *viettelidc.Configuration
+	if username != "" && domainId != "" {
+		voksHost := os.Getenv("VIETTELIDC_HOST")
+		if voksHost == "" {
+			voksHost = "https://api.viettelidc.com.vn"
+		}
+		configuration := &viettelidc.Configuration{
+			BasePath:      voksHost,
+			DefaultHeader: make(map[string]string),
+			UserAgent:     "viettelidc/iac",
+		}
+		iamAPIClient := iam.NewAPIClient(configuration)
+		loginRes, _, err := iamAPIClient.AuthorizationControllerApi.LoginViaLoginPage(ctx, iam.LoginViaLoginPageRequest{
+			Username:     username,
+			Password:     password,
+			DomainId:     domainId,
+			IsRememberMe: false,
+			UserType:     "IAM_USER",
+		})
+		if err != nil {
+			resp.Diagnostics.AddError("VOKS Login Failed", err.Error())
+			return
+		}
+
+		if loginRes.IsRequiredSecondAuthenticationStep {
+			if mfaCode == "" {
+				resp.Diagnostics.AddAttributeError(path.Root("mfa_code"), "MFA Required", "Set mfa_code or VIETTELIDC_MFA_CODE.")
+				return
+			}
+			exchangeRes, _, err := iamAPIClient.AuthorizationControllerApi.VerifyMfaTokenCode(ctx, iam.LoginViaPageWithMfaCodeRequest{
+				MfaToken: loginRes.Data,
+				MfaCode:  mfaCode,
+			})
+			if err != nil {
+				resp.Diagnostics.AddError("VOKS MFA Failed", err.Error())
+				return
+			}
+			configuration.AccessToken = exchangeRes.Data
+		} else {
+			configuration.AccessToken = loginRes.Data
+		}
+
+		accountRes, _, err := iamAPIClient.AccountClientApi.GetAccountInfoClient(ctx)
+		if err != nil {
+			resp.Diagnostics.AddError("VOKS GetAccount Failed", err.Error())
+			return
+		}
+		configuration.Id = accountRes.Data.Id
+		configuration.DomainId = accountRes.Data.DomainId
+		configuration.CustomerId = accountRes.Data.CustomerId
+		iacData.CustomerID = configuration.CustomerId
+		voksConfig = configuration
+
+		// ── Also login to IaC API as IAM user so IaC resources are accessible ──
+		oldToken, accessToken, iacErr := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
+			Username: username,
+			Password: password,
+			UserType: "IAM_USER",
+			DomainId: domainId,
+		})
+		if iacErr != nil {
+			resp.Diagnostics.AddError(
+				"IaC Login Failed (IAM user)",
+				"Could not authenticate IAM user with IaC API: "+iacErr.Error(),
+			)
+			return
+		}
+		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
 	}
 
-	configuration.Id = accountRes.Data.Id
-	configuration.DomainId = accountRes.Data.DomainId
-	configuration.CustomerId = accountRes.Data.CustomerId
-
-	//// Make the Viettelidc client available during DataSource and Resource
-	//// type Configure methods.
-	resp.DataSourceData = configuration
-	resp.ResourceData = configuration
+	shared := &sharedpd.SharedProviderData{
+		VoksConfig: voksConfig,
+		IacData:    iacData,
+	}
+	resp.DataSourceData = shared
+	resp.ResourceData = shared
 }
 
 // DataSources defines the data sources implemented in the provider.
 func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
+		// VOKS
 		voksDatasource.NewClusterDataSource,
 		voksDatasource.NewKubeconfigResource,
 		voksDatasource.NewNodeGroupDatasource,
 		voksDatasource.NewAddonDataSource,
 		voksDatasource.NewAddonsDataSource,
 		voksDatasource.NewAddonVersionsDataSource,
+		// IaC networking
+		iacNetworking.NewSubnetDataSource,
+		iacNetworking.NewSubnetsDataSource,
+		iacNetworking.NewVPCDataSource,
+		iacNetworking.NewFloatingIPDataSource,
+		iacNetworking.NewLoadBalancerDataSource,
+		iacNetworking.NewNatGatewayDataSource,
+		iacNetworking.NewSecurityGroupDataSource,
+		iacNetworking.NewNetworkInterfaceDataSource,
+		iacNetworking.NewNetworkInterfacesDataSource,
+		iacNetworking.NewRouteTableDataSource,
+		iacNetworking.NewInternetGatewayDataSource,
+		iacNetworking.NewInstanceDataSource,
+		iacNetworking.NewVMTemplatesDataSource,
+		iacNetworking.NewVFirewallsDataSource,
+		iacNetworking.NewCertificateDataSource,
+		iacNetworking.NewBackupRecordDataSource,
+		iacNetworking.NewSGRuleTypesDataSource,
+		// IaC vpc
+		iacVpc.NewLaunchTemplateDataSource,
+		iacVpc.NewLaunchTemplatesDataSource,
+		iacVpc.NewAutoscaleGroupsDataSource,
 	}
 }
 
 // Resources defines the resources implemented in the provider.
 func (p *viettelidcProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
+		// VOKS
 		voksResource.NewClusterResource,
 		voksResource.NewNodeGroupResource,
 		voksResource.NewAddonResource,
+		// IaC networking
+		iacNetworking.NewSubnetResource,
+		iacNetworking.NewVPCResource,
+		iacNetworking.NewFloatingIPResource,
+		iacNetworking.NewLoadBalancerResource,
+		iacNetworking.NewNatGatewayResource,
+		iacNetworking.NewSecurityGroupResource,
+		iacNetworking.NewSecurityGroupRuleResource,
+		iacNetworking.NewNetworkInterfaceResource,
+		iacNetworking.NewNetworkInterfaceAttachmentResource,
+		iacNetworking.NewRouteTableResource,
+		iacNetworking.NewRouteTableAssociationResource,
+		iacNetworking.NewKeyPairResource,
+		iacNetworking.NewInstanceResource,
+		iacNetworking.NewVolumeResource,
+		iacNetworking.NewVolumeAttachmentResource,
+		iacNetworking.NewCertificateResource,
+		iacNetworking.NewBackupPlanResource,
+		// IaC vpc
+		iacVpc.NewAutoscaleGroupResource,
+		iacVpc.NewLaunchTemplateResource,
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/viettelidc-provider/viettelidc-api-client-go/service/voks"
-	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
+	sharedpd "terraform-provider-viettelidc/internal/providerdata"
 	"strconv"
 	"strings"
 	"time"
@@ -66,7 +66,7 @@ func (c *clusterResource) Configure(ctx context.Context, request resource.Config
 		return
 	}
 
-	cfg, ok := request.ProviderData.(*viettelidc.Configuration)
+	shared, ok := request.ProviderData.(*sharedpd.SharedProviderData)
 	if !ok {
 		response.Diagnostics.AddError(
 			"Unexpected Data Source Configure Type",
@@ -76,7 +76,7 @@ func (c *clusterResource) Configure(ctx context.Context, request resource.Config
 		return
 	}
 
-	c.client = voks.NewAPIClient(*cfg)
+	c.client = voks.NewAPIClient(*shared.VoksConfig)
 }
 
 func (c *clusterResource) Metadata(ctx context.Context, request resource.MetadataRequest, response *resource.MetadataResponse) {
