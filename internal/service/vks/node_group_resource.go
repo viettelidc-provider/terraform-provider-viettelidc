@@ -6,9 +6,7 @@ package vks
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -66,23 +64,23 @@ func (r *nodeGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			},
 			"name": schema.StringAttribute{
 				Description: "Name of the Node Group.",
-				Required:    true,
+				Computed:    true,
 			},
 			"instance_type": schema.StringAttribute{
 				Description: "Instance type of the workers.",
-				Required:    true,
+				Computed:    true,
 			},
 			"min_size": schema.Int64Attribute{
 				MarkdownDescription: "Minimum number of nodes in the Node Group. Cannot be less than 1.",
-				Required:    true,
+				Computed:    true,
 			},
 			"max_size": schema.Int64Attribute{
 				MarkdownDescription: "Maximum number of nodes in the Node Group.",
-				Required:    true,
+				Computed:    true,
 			},
 			"desired_size": schema.Int64Attribute{
 				MarkdownDescription: "Desired number of nodes in the Node Group. Must be between minimum and maximum size.",
-				Required:    true,
+				Computed:    true,
 			},
 			"status": schema.StringAttribute{
 				Description: "Status of the Node Group.",
@@ -177,102 +175,17 @@ func (r *nodeGroupResource) Read(ctx context.Context, req resource.ReadRequest, 
 }
 
 func (r *nodeGroupResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state NodeGroupResourceModel
-	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	payload := map[string]interface{}{
-		"customer_id":   r.clientData.CustomerID,
-		"cluster_id":    state.ClusterID.ValueString(),
-		"id":            state.ID.ValueString(),
-		"min_size":      plan.MinSize.ValueInt64(),
-		"max_size":      plan.MaxSize.ValueInt64(),
-		"desired_size":  plan.DesiredSize.ValueInt64(),
-		"is_auto_scale": plan.MinSize.ValueInt64() != plan.MaxSize.ValueInt64(),
-		"name":          state.Name.ValueString(),
-		"isAutoRepair":  false,
-	}
-
-	apiResp, diags := callAPI(ctx, r.clientData.Client, pathNodeGroupEdit, payload)
-	if diags.HasError() {
-		if apiResp != nil && (strings.Contains(apiResp.Message, "ERROR_COMMON_0001") || strings.Contains(apiResp.Message, "ERROR_CLUSTER_UPDATING")) {
-			resp.Diagnostics.AddWarning(
-				"Node Group Scaling Warning",
-				fmt.Sprintf("Cluster node group is degraded, busy or updating. Ignoring API failure to allow Terraform state update: %s", apiResp.Message),
-			)
-		} else {
-			resp.Diagnostics.Append(diags...)
-			return
-		}
-	}
-
-	// Async polling loop
-	for i := 0; i < 90; i++ {
-		time.Sleep(10 * time.Second)
-		readPayload := map[string]interface{}{
-			"id":          state.ID.ValueString(),
-			"cluster_id":  state.ClusterID.ValueString(),
-			"customer_id": r.clientData.CustomerID,
-		}
-		readResp, _ := callAPI(ctx, r.clientData.Client, pathNodeGroupDetail, readPayload)
-		if readResp != nil && readResp.IsSuccess() {
-			var dMap map[string]interface{}
-			if err := json.Unmarshal(readResp.Data, &dMap); err == nil {
-				status := asString(dMap, "status")
-				if status == "" || status == "ACTIVE" || status == "POWER_ON" {
-					plan.Status = types.StringValue(status)
-					break
-				}
-				if status == "ERROR" {
-					resp.Diagnostics.AddError("Update Error", "Node Group reached ERROR state")
-					return
-				}
-			}
-		}
-	}
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	resp.Diagnostics.AddError(
+		"Action Not Supported",
+		"Updating VKS Node Group via Terraform is not supported in this version.",
+	)
 }
 
 func (r *nodeGroupResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state NodeGroupResourceModel
-	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-
-	payload := map[string]interface{}{
-		"nodeGroupId": state.ID.ValueString(),
-		"cluster_id":  state.ClusterID.ValueString(),
-		"customer_id": r.clientData.CustomerID,
-	}
-
-	apiResp, diags := callAPI(ctx, r.clientData.Client, pathNodeGroupDelete, payload)
-	if diags.HasError() {
-		if apiResp != nil && isNotFoundMessage(apiResp.Message) {
-			return
-		}
-		resp.Diagnostics.Append(diags...)
-		return
-	}
-
-	// Poll until deleted
-	for i := 0; i < 90; i++ { // 15 mins timeout
-		time.Sleep(10 * time.Second)
-		readPayload := map[string]interface{}{
-			"id":          state.ID.ValueString(),
-			"cluster_id":  state.ClusterID.ValueString(),
-			"customer_id": r.clientData.CustomerID,
-		}
-		readResp, _ := callAPI(ctx, r.clientData.Client, pathNodeGroupDetail, readPayload)
-		if readResp != nil && isNotFoundMessage(readResp.Message) {
-			return
-		}
-	}
-	resp.Diagnostics.AddError("Delete Timeout", "Node Group was not deleted within the expected time.")
+	resp.Diagnostics.AddError(
+		"Action Not Supported",
+		"Deleting VKS Node Group via Terraform is not supported in this version.",
+	)
 }
 
 func (r *nodeGroupResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
