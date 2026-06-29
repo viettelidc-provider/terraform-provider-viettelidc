@@ -14,9 +14,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/viettelidc-provider/viettelidc-api-client-go/service/voks"
-	sharedpd "terraform-provider-viettelidc/internal/providerdata"
 	"strconv"
 	"strings"
+	sharedpd "terraform-provider-viettelidc/internal/providerdata"
 	"time"
 )
 

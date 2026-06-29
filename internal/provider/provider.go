@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -17,13 +18,15 @@ import (
 	"github.com/viettelidc-provider/viettelidc-api-client-go/service/iam"
 	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
 
-	iac_client "terraform-provider-viettelidc/internal/service/iac/client"
-	iac_providerdata "terraform-provider-viettelidc/internal/service/iac/providerdata"
-	iacNetworking "terraform-provider-viettelidc/internal/service/iac/networking"
-	iacVpc "terraform-provider-viettelidc/internal/service/iac/vpc"
 	sharedpd "terraform-provider-viettelidc/internal/providerdata"
+	iacDbs "terraform-provider-viettelidc/internal/service/dbs"
+	iacVdks "terraform-provider-viettelidc/internal/service/vks"
 	voksDatasource "terraform-provider-viettelidc/internal/service/voks/datasource"
 	voksResource "terraform-provider-viettelidc/internal/service/voks/resource"
+	iac_client "terraform-provider-viettelidc/internal/service/vopc/client"
+	iacNetworking "terraform-provider-viettelidc/internal/service/vopc/networking"
+	iac_providerdata "terraform-provider-viettelidc/internal/service/vopc/providerdata"
+	iacVpc "terraform-provider-viettelidc/internal/service/vopc/vpc"
 )
 
 // Ensure the implementation satisfies the expected interfaces.
@@ -56,6 +59,7 @@ type viettelidcProviderModel struct {
 	MfaCode  types.String `tfsdk:"mfa_code"`
 	BaseURL  types.String `tfsdk:"base_url"`
 	VpcID    types.String `tfsdk:"vpc_id"`
+	HostID   types.Int64  `tfsdk:"host_id"`
 }
 
 // Metadata returns the provider type name.
@@ -97,6 +101,10 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 				Description: "Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.",
 				Optional:    true,
 			},
+			"host_id": schema.Int64Attribute{
+				Description: "Host ID for IaC/VDKS/DBS resources. Env: VIETTELIDC_HOST_ID.",
+				Optional:    true,
+			},
 		},
 	}
 }
@@ -122,6 +130,13 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	password := os.Getenv("VIETTELIDC_PASSWORD")
 	domainId := os.Getenv("VIETTELIDC_DOMAIN_ID")
 	mfaCode := os.Getenv("VIETTELIDC_MFA_CODE")
+
+	var hostID int64
+	if envHostID := os.Getenv("VIETTELIDC_HOST_ID"); envHostID != "" {
+		if val, err := strconv.ParseInt(envHostID, 10, 64); err == nil {
+			hostID = val
+		}
+	}
 
 	if !config.Email.IsNull() && !config.Email.IsUnknown() {
 		email = config.Email.ValueString()
@@ -151,6 +166,9 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	if !config.VpcID.IsNull() && !config.VpcID.IsUnknown() {
 		iacVpcID = config.VpcID.ValueString()
 	}
+	if !config.HostID.IsNull() && !config.HostID.IsUnknown() {
+		hostID = config.HostID.ValueInt64()
+	}
 
 	if email != "" && username != "" {
 		resp.Diagnostics.AddError(
@@ -178,6 +196,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	// ── IaC auth: email + password → root user (LoginWithPassword) ───────────
 	iacData := &iac_providerdata.ProviderData{
 		DefaultVpcID: iacVpcID,
+		HostID:       hostID,
 	}
 	if email != "" {
 		oldToken, accessToken, err := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
@@ -193,6 +212,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 			return
 		}
 		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
+		iacData.Client.HostID = hostID
 
 		// Auto-extract customer_id from the JWT when not set explicitly.
 		customerID := os.Getenv("VIETTELIDC_CUSTOMER_ID")
@@ -271,6 +291,7 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 			return
 		}
 		iacData.Client = iac_client.NewClientWithTokens(iacBaseURL, oldToken, accessToken)
+		iacData.Client.HostID = hostID
 	}
 
 	shared := &sharedpd.SharedProviderData{
@@ -309,10 +330,50 @@ func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.
 		iacNetworking.NewCertificateDataSource,
 		iacNetworking.NewBackupRecordDataSource,
 		iacNetworking.NewSGRuleTypesDataSource,
+		iacNetworking.NewHostsByOrderDataSource,
+		iacNetworking.NewHostsByCustomerDataSource,
 		// IaC vpc
 		iacVpc.NewLaunchTemplateDataSource,
 		iacVpc.NewLaunchTemplatesDataSource,
 		iacVpc.NewAutoscaleGroupsDataSource,
+		// VDKS
+		iacVdks.NewClusterDataSource,
+		iacVdks.NewNodeGroupDataSource,
+		iacVdks.NewSubnetsDataSource,
+		iacVdks.NewSubnetDataSource,
+		iacVdks.NewNetworkInterfacesDataSource,
+		iacVdks.NewNetworkInterfaceDataSource,
+		iacVdks.NewSecurityGroupsDataSource,
+		iacVdks.NewSecurityGroupDataSource,
+		iacVdks.NewNfsServerDataSource,
+		iacVdks.NewAutoscaleHistoryDataSource,
+		iacVdks.NewClusterEventsDataSource,
+		iacVdks.NewNodegroupLabelsDataSource,
+		iacVdks.NewNodegroupTaintsDataSource,
+		iacVdks.NewNodegroupTemplatesDataSource,
+		iacVdks.NewClusterNodeDetailDataSource,
+		iacVdks.NewClusterNodesDataSource,
+		iacVdks.NewKubeconfigDataSource,
+		iacVdks.NewSchedulerDataSource,
+		iacVdks.NewSchedulersDataSource,
+		iacVdks.NewSchedulerBackupsDataSource,
+		iacVdks.NewClusterNetworkDataSource,
+		iacVdks.NewProvidersDataSource,
+		iacVdks.NewRegionHostsDataSource,
+		iacVdks.NewCustomerInfoDataSource,
+		iacVdks.NewCustomerCaptchaDataSource,
+		iacVdks.NewCustomerSupportInfoDataSource,
+		iacVdks.NewBackupRecordDataSource,
+		iacVdks.NewBackupRecordsDataSource,
+		iacVdks.NewClusterBlockStoragesDataSource,
+		// DBS
+		iacDbs.NewVDBSDatabaseInstanceDataSource,
+		iacDbs.NewVDBSSubnetGroupDataSource,
+		iacDbs.NewVDBSSecurityGroupDataSource,
+		iacDbs.NewVDBSSubnetDataSource,
+		iacDbs.NewVDBSNetworkInterfaceDataSource,
+		iacDbs.NewVDBSBackupDataSource,
+		iacDbs.NewVDBSBackupSchedulerDataSource,
 	}
 }
 
@@ -344,5 +405,19 @@ func (p *viettelidcProvider) Resources(_ context.Context) []func() resource.Reso
 		// IaC vpc
 		iacVpc.NewAutoscaleGroupResource,
 		iacVpc.NewLaunchTemplateResource,
+		// VDKS
+		iacVdks.NewClusterResource,
+		iacVdks.NewNodeGroupResource,
+		iacVdks.NewAddonResource,
+		iacVdks.NewNfsStorageResource,
+		iacVdks.NewSchedulerResource,
+		iacVdks.NewBackupRecordResource,
+		iacVdks.NewClusterAutoscaleConfigResource,
+		// DBS
+		iacDbs.NewVDBSDatabaseInstanceResource,
+		iacDbs.NewVDBSParameterGroupResource,
+		iacDbs.NewVDBSBackupSchedulerResource,
+		iacDbs.NewVDBSDatabaseUserResource,
+		iacDbs.NewVDBSSecurityGroupRuleResource,
 	}
 }

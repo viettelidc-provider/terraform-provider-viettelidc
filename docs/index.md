@@ -27,7 +27,11 @@ provider "viettelidc" {
 
 ### Optional
 
+- `base_url` (String) IaC API Gateway base URL. Default: https://iac.viettelidc.com.vn. Env: VIETTELIDC_BASE_URL.
 - `domain_id` (String) DomainId for ViettelIdc API.
+- `email` (String) Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.
+- `host_id` (Number) Host ID for IaC/VDKS/DBS resources. Env: VIETTELIDC_HOST_ID.
 - `mfa_code` (String) Muti-factor Authentication code for ViettelIdc API.
 - `password` (String) Password for ViettelIdc API.
-- `username` (String) Username for ViettelIdc API.
+- `username` (String) Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.
+- `vpc_id` (String) Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.
