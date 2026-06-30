@@ -1,10 +1,13 @@
+// Copyright (c) HashiCorp, Inc.
+// SPDX-License-Identifier: MPL-2.0
+
 // Package providerdata defines the shared data type published to all resources
 // and data sources via Configure(). Placing it in its own package prevents
 // import cycles between internal/provider and the service packages.
 package providerdata
 
 import (
-	iac_providerdata "terraform-provider-viettelidc/internal/service/iac/providerdata"
+	iac_providerdata "terraform-provider-viettelidc/internal/service/vopc/providerdata"
 
 	"github.com/viettelidc-provider/viettelidc-api-client-go/viettelidc"
 )
