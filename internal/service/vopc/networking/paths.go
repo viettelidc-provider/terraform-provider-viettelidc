@@ -52,6 +52,7 @@ const (
 	pathSGDelete = "/csa/api/v1/networking/security-group/delete"
 	pathSGList   = "/csa/api/v1/networking/security-group/list"
 
+	pathSGVmUpdate         = "/csa/api/v1/networking/security-group/update/list"
 	pathSGRuleCreate       = "/csa/api/v1/networking/security-group/rule/create"
 	pathSGRuleUpdate       = "/csa/api/v1/networking/security-group/rule/update"
 	pathSGRuleInboundList  = "/csa/api/v1/networking/security-group/rule/inbound/list"

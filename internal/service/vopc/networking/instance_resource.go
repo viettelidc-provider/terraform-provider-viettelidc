@@ -291,7 +291,7 @@ func (r *InstanceResource) Read(ctx context.Context, req resource.ReadRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update handles resize (cpu/memory change). Requires stopping the VM first.
+// Update handles resize and security group changes.
 func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan, state InstanceResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -305,51 +305,128 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 		vpcID = r.defaultVpcID
 	}
 	vmID := state.ID.ValueString()
-
-	// Stop the VM first (id is sent as integer per HAR).
 	vmIDInt, err := strconv.ParseInt(vmID, 10, 64)
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid VM ID", fmt.Sprintf("vm id %q is not a valid integer: %s", vmID, err))
 		return
 	}
 
-	stopBody := map[string]interface{}{
-		"instance_id": vmIDInt,
-		"vpc_id":      vpcID,
-		"customer_id": r.customerID,
-	}
-	if _, diags := callAPI(ctx, r.client, pathVMStop, stopBody); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
-		return
+	needsResize := false
+	if !plan.CPU.Equal(state.CPU) || !plan.Memory.Equal(state.Memory) {
+		needsResize = true
 	}
 
-	pollBody := map[string]interface{}{
-		"instance_id": vmID,
-		"vpc_id":      vpcID,
-		"customer_id": r.customerID,
-	}
-	if err := pollForStatus(ctx, r.client, pathVMDetail, pollBody, "status", []string{"POWERED_OFF", "SHUTOFF"}, instanceStopTimeout); err != nil {
-		resp.Diagnostics.AddError("Instance did not stop", err.Error())
-		return
+	needsSGUpdate := false
+	if !plan.SecurityGroupIDs.Equal(state.SecurityGroupIDs) {
+		needsSGUpdate = true
 	}
 
-	// Resize (The API Gateway renames instance_id→id).
-	updateBody := map[string]interface{}{
-		"instance_id": vmID,
-		"cpu":         plan.CPU.ValueInt64(),
-		"memory":      plan.Memory.ValueInt64(),
-		"vpc_id":      vpcID,
-		"customer_id": r.customerID,
-	}
-	if _, diags := callAPI(ctx, r.client, pathVMUpdate, updateBody); diags.HasError() {
-		resp.Diagnostics.Append(diags...)
-		return
+	if needsResize {
+		stopBody := map[string]interface{}{
+			"instance_id": vmIDInt,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMStop, stopBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+
+		pollBody := map[string]interface{}{
+			"instance_id": vmID,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if err := pollForStatus(ctx, r.client, pathVMDetail, pollBody, "status", []string{"POWERED_OFF", "SHUTOFF"}, instanceStopTimeout); err != nil {
+			resp.Diagnostics.AddError("Instance did not stop", err.Error())
+			return
+		}
+
+		// Resize (The API Gateway renames instance_id→id).
+		updateBody := map[string]interface{}{
+			"instance_id": vmID,
+			"cpu":         plan.CPU.ValueInt64(),
+			"memory":      plan.Memory.ValueInt64(),
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMUpdate, updateBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+
+		// Wait for ACTIVE again after resize.
+		if err := pollForStatus(ctx, r.client, pathVMDetail, pollBody, "status", []string{"POWERED_ON", "ACTIVE"}, instanceCreateTimeout); err != nil {
+			resp.Diagnostics.AddError("Instance did not become POWERED_ON/ACTIVE after resize", err.Error())
+			return
+		}
 	}
 
-	// Wait for ACTIVE again after resize.
-	if err := pollForStatus(ctx, r.client, pathVMDetail, pollBody, "status", []string{"POWERED_ON", "ACTIVE"}, instanceCreateTimeout); err != nil {
-		resp.Diagnostics.AddError("Instance did not become POWERED_ON/ACTIVE after resize", err.Error())
-		return
+	if needsSGUpdate {
+		var oldSGs, newSGs []string
+		resp.Diagnostics.Append(state.SecurityGroupIDs.ElementsAs(ctx, &oldSGs, false)...)
+		resp.Diagnostics.Append(plan.SecurityGroupIDs.ElementsAs(ctx, &newSGs, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		oldSGsMap := make(map[string]bool)
+		for _, sg := range oldSGs {
+			oldSGsMap[sg] = true
+		}
+		newSGsMap := make(map[string]bool)
+		for _, sg := range newSGs {
+			newSGsMap[sg] = true
+		}
+
+		var sgPayload []map[string]interface{}
+		// Kept
+		for _, sg := range newSGs {
+			if oldSGsMap[sg] {
+				sgPayload = append(sgPayload, map[string]interface{}{
+					"id":                 sg,
+					"vttVmId":            vmIDInt,
+					"vttSecurityGroupId": sg,
+				})
+			}
+		}
+		// Added
+		for _, sg := range newSGs {
+			if !oldSGsMap[sg] {
+				sgPayload = append(sgPayload, map[string]interface{}{
+					"id":                 sg,
+					"type":               "attach",
+					"vttVmId":            vmIDInt,
+					"vttSecurityGroupId": sg,
+				})
+			}
+		}
+		// Removed
+		for _, sg := range oldSGs {
+			if !newSGsMap[sg] {
+				sgPayload = append(sgPayload, map[string]interface{}{
+					"id":                 sg,
+					"type":               "detach",
+					"vttVmId":            vmIDInt,
+					"vttSecurityGroupId": sg,
+				})
+			}
+		}
+
+		vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+		customerIDInt, _ := strconv.ParseInt(r.customerID, 10, 64)
+
+		sgUpdateBody := map[string]interface{}{
+			"vttVmId":        vmIDInt,
+			"securityGroups": sgPayload,
+			"vpcId":          vpcIDInt,
+			"customerId":     customerIDInt,
+		}
+
+		if _, diags := callAPI(ctx, r.client, pathSGVmUpdate, sgUpdateBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
 	}
 
 	plan.ID = state.ID
