@@ -51,22 +51,22 @@ func (r *VPCResource) Metadata(_ context.Context, req resource.MetadataRequest, 
 
 func (r *VPCResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Quản lý Virtual Private Cloud (VPC) trên ViettelIDC.",
+		Description: "Provides a Virtual Private Cloud (VPC) resource on ViettelIDC.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
-				Description: "ID của VPC (do hệ thống cấp).",
+				Description: "VPC ID assigned by the platform.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"name": schema.StringAttribute{
 				Required:    true,
-				Description: "Tên VPC.",
+				Description: "Name of the VPC.",
 			},
 			"cidr_block": schema.StringAttribute{
 				Required:    true,
-				Description: "Dải địa chỉ IP của VPC theo định dạng CIDR (ví dụ: 10.0.0.0/16). Không thể thay đổi sau khi tạo.",
+				Description: "IP address range in CIDR notation (e.g. 10.0.0.0/16). Cannot be changed after creation.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -74,14 +74,14 @@ func (r *VPCResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *
 			"description": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Mô tả VPC.",
+				Description: "Description of the VPC.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
 			},
 			"status": schema.StringAttribute{
 				Computed:    true,
-				Description: "Trạng thái VPC (success, pending, error...).",
+				Description: "VPC status (success, pending, error...).",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},

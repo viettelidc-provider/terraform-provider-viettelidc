@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -229,14 +230,15 @@ func (r *VDBSParameterGroupResource) Create(ctx context.Context, req resource.Cr
 	plan.ID = types.StringValue(pgID)
 	plan.VpcID = types.StringValue(vpcID)
 
-	// Update parameters if any configured
-	r.updateParameters(ctx, pgID, hostID, plan.Parameters, &resp.Diagnostics)
-	if resp.Diagnostics.HasError() {
+	// 1. Poll until parameter group is ACTIVE after creation (from CREATING status)
+	if err := r.pollUntilPGActive(ctx, pgID, hostID, 5*time.Minute); err != nil {
+		resp.Diagnostics.AddError("Failed waiting for parameter group to become ACTIVE", err.Error())
 		return
 	}
 
-	// Attach to DB instance if instance_id is specified
-	if !plan.InstanceID.IsNull() && !plan.InstanceID.IsUnknown() && plan.InstanceID.ValueString() != "" {
+	// 2. Attach to DB instance first if instance_id is specified
+	hasInstance := !plan.InstanceID.IsNull() && !plan.InstanceID.IsUnknown() && plan.InstanceID.ValueString() != ""
+	if hasInstance {
 		serviceInit, err := resolveServiceInit(ctx, r.client, r.customerID, plan.InstanceID.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to resolve database instance", err.Error())
@@ -259,6 +261,22 @@ func (r *VDBSParameterGroupResource) Create(ctx context.Context, req resource.Cr
 		}
 	} else if plan.InstanceID.IsUnknown() {
 		plan.InstanceID = types.StringNull()
+	}
+
+	// 3. Update parameters if any configured
+	r.updateParameters(ctx, pgID, hostID, plan.Parameters, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// 4. Poll until parameter group is ACTIVE again, but only if attached and parameters were configured
+	if hasInstance && !plan.Parameters.IsNull() && !plan.Parameters.IsUnknown() {
+		if len(plan.Parameters.Elements()) > 0 {
+			if err := r.pollUntilPGActive(ctx, pgID, hostID, 5*time.Minute); err != nil {
+				resp.Diagnostics.AddError("Failed waiting for parameter group to become ACTIVE after update", err.Error())
+				return
+			}
+		}
 	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -533,16 +551,9 @@ func (r *VDBSParameterGroupResource) Update(ctx context.Context, req resource.Up
 		}
 	}
 
-	// 2. If parameters changed, call updateParameters
-	if !plan.Parameters.Equal(state.Parameters) {
-		r.updateParameters(ctx, pgID, hostID, plan.Parameters, &resp.Diagnostics)
-		if resp.Diagnostics.HasError() {
-			return
-		}
-	}
-
-	// 3. If instance_id changed, attach to database instance
-	if plan.InstanceID.ValueString() != state.InstanceID.ValueString() && plan.InstanceID.ValueString() != "" {
+	// 2. If instance_id changed, attach to database instance first
+	instanceChanged := plan.InstanceID.ValueString() != state.InstanceID.ValueString() && plan.InstanceID.ValueString() != ""
+	if instanceChanged {
 		serviceInit, err := resolveServiceInit(ctx, r.client, r.customerID, plan.InstanceID.ValueString())
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to resolve database instance", err.Error())
@@ -562,6 +573,26 @@ func (r *VDBSParameterGroupResource) Update(ctx context.Context, req resource.Up
 		resp.Diagnostics.Append(attachDiags...)
 		if resp.Diagnostics.HasError() {
 			return
+		}
+	}
+
+	// 3. If parameters changed, call updateParameters
+	parametersChanged := !plan.Parameters.Equal(state.Parameters)
+	if parametersChanged {
+		r.updateParameters(ctx, pgID, hostID, plan.Parameters, &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		// Poll until parameter group is ACTIVE only if attached to an instance
+		hasInstance := plan.InstanceID.ValueString() != "" || (plan.InstanceID.IsNull() && state.InstanceID.ValueString() != "")
+		if hasInstance && !plan.Parameters.IsNull() && !plan.Parameters.IsUnknown() {
+			if len(plan.Parameters.Elements()) > 0 {
+				if err := r.pollUntilPGActive(ctx, pgID, hostID, 5*time.Minute); err != nil {
+					resp.Diagnostics.AddError("Failed waiting for parameter group to become ACTIVE", err.Error())
+					return
+				}
+			}
 		}
 	}
 
@@ -766,4 +797,37 @@ func callDBSAPI(ctx context.Context, c *client.Client, method string, path strin
 	}
 
 	return resp, diags
+}
+
+// pollUntilPGActive polls the parameter group detail endpoint until it is ACTIVE.
+func (r *VDBSParameterGroupResource) pollUntilPGActive(ctx context.Context, pgID string, hostID int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		url := fmt.Sprintf(pathParamGroupDetail, pgID) + fmt.Sprintf("?hostId=%d", hostID)
+		apiResp, callDiags := callDBSAPI(ctx, r.client, http.MethodGet, url, nil)
+		if callDiags.HasError() {
+			// Transient error or check if deadline passed
+		} else {
+			var data map[string]interface{}
+			if err := json.Unmarshal(apiResp.Data, &data); err == nil {
+				status := strings.ToUpper(asString(data, "status"))
+				if status == "ACTIVE" {
+					return nil
+				}
+				if status == "ERROR" || status == "FAILED" {
+					return fmt.Errorf("parameter group %s reached error state: %s", pgID, status)
+				}
+			}
+		}
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timeout waiting for parameter group %s to become ACTIVE after %v", pgID, timeout)
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
