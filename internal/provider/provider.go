@@ -57,7 +57,6 @@ type viettelidcProviderModel struct {
 	Username types.String `tfsdk:"username"`
 	Password types.String `tfsdk:"password"`
 	MfaCode  types.String `tfsdk:"mfa_code"`
-	BaseURL  types.String `tfsdk:"base_url"`
 	VpcID    types.String `tfsdk:"vpc_id"`
 	HostID   types.Int64  `tfsdk:"host_id"`
 }
@@ -91,10 +90,6 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 			},
 			"mfa_code": schema.StringAttribute{
 				Description: "Muti-factor Authentication code for ViettelIdc API.",
-				Optional:    true,
-			},
-			"base_url": schema.StringAttribute{
-				Description: "IaC API Gateway base URL. Default: https://iac.viettelidc.com.vn. Env: VIETTELIDC_BASE_URL.",
 				Optional:    true,
 			},
 			"vpc_id": schema.StringAttribute{
@@ -157,9 +152,6 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 	iacBaseURL := os.Getenv("VIETTELIDC_BASE_URL")
 	if iacBaseURL == "" {
 		iacBaseURL = "https://iac.viettelidc.com.vn"
-	}
-	if !config.BaseURL.IsNull() && !config.BaseURL.IsUnknown() {
-		iacBaseURL = config.BaseURL.ValueString()
 	}
 
 	iacVpcID := os.Getenv("VIETTELIDC_VPC_ID")
@@ -394,6 +386,7 @@ func (p *viettelidcProvider) Resources(_ context.Context) []func() resource.Reso
 		iacNetworking.NewSecurityGroupRuleResource,
 		iacNetworking.NewNetworkInterfaceResource,
 		iacNetworking.NewNetworkInterfaceAttachmentResource,
+		iacNetworking.NewSecurityGroupAttachmentResource,
 		iacNetworking.NewRouteTableResource,
 		iacNetworking.NewRouteTableAssociationResource,
 		iacNetworking.NewKeyPairResource,
