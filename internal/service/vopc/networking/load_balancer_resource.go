@@ -237,10 +237,11 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		return
 	}
 
-	// Map package type to numeric code used by the API (LB Large = 2)
-	lbTypeCode := 1
-	if plan.PackageType.ValueString() == "LB Large" {
-		lbTypeCode = 2
+	// Map package type to numeric code used by the API
+	lbTypeCode, err := getPackageTypeCode(plan.PackageType.ValueString())
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("package_type"), "Invalid package_type", err.Error())
+		return
 	}
 
 	// Resolve pool members (calls attached-nic/list) before building request body.
@@ -593,10 +594,8 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 	if apiPkg != existingPkg && !model.PackageType.IsNull() && !model.PackageType.IsUnknown() {
 		// If both values resolve to the same lbTypeCode, keep the plan/state value.
 		codeFn := func(s string) int {
-			if s == "LB Large" {
-				return 2
-			}
-			return 1
+			code, _ := getPackageTypeCode(s)
+			return code
 		}
 		if codeFn(existingPkg) == codeFn(apiPkg) {
 			apiPkg = existingPkg
@@ -841,4 +840,29 @@ func parseIntPtr(s string) *int64 {
 		return nil
 	}
 	return &i
+}
+
+func getPackageTypeCode(s string) (int, error) {
+	switch s {
+	case "LB Compact", "LB Small":
+		return 1, nil
+	case "LB Large":
+		return 2, nil
+	case "LB Quad Large":
+		return 3, nil
+	case "LB X-Large", "LB X Large":
+		return 4, nil
+	case "LB Large HA":
+		return 5, nil
+	case "LB Compact HA":
+		return 6, nil
+	case "LB X Large HA", "LB X-Large HA":
+		return 7, nil
+	case "LB Quad Large HA":
+		return 8, nil
+	case "LB K8S Base":
+		return 9, nil
+	default:
+		return 0, fmt.Errorf("invalid load balancer package type: %q. Supported types are: 'LB Compact', 'LB Small', 'LB Large', 'LB Quad Large', 'LB X-Large', 'LB Large HA', 'LB Compact HA', 'LB X Large HA', 'LB Quad Large HA', 'LB K8S Base'", s)
+	}
 }
