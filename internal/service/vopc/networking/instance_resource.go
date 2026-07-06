@@ -383,32 +383,41 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 		// Kept
 		for _, sg := range newSGs {
 			if oldSGsMap[sg] {
+				sgName := r.lookupSGName(ctx, sg, vpcID)
 				sgPayload = append(sgPayload, map[string]interface{}{
 					"id":                 sg,
 					"vttVmId":            vmIDInt,
 					"vttSecurityGroupId": sg,
+					"name":               sgName,
+					"defaultFromVpcOps":  false,
 				})
 			}
 		}
 		// Added
 		for _, sg := range newSGs {
 			if !oldSGsMap[sg] {
+				sgName := r.lookupSGName(ctx, sg, vpcID)
 				sgPayload = append(sgPayload, map[string]interface{}{
 					"id":                 sg,
 					"type":               "attach",
 					"vttVmId":            vmIDInt,
 					"vttSecurityGroupId": sg,
+					"name":               sgName,
+					"defaultFromVpcOps":  false,
 				})
 			}
 		}
 		// Removed
 		for _, sg := range oldSGs {
 			if !newSGsMap[sg] {
+				sgName := r.lookupSGName(ctx, sg, vpcID)
 				sgPayload = append(sgPayload, map[string]interface{}{
 					"id":                 sg,
 					"type":               "detach",
 					"vttVmId":            vmIDInt,
 					"vttSecurityGroupId": sg,
+					"name":               sgName,
+					"defaultFromVpcOps":  false,
 				})
 			}
 		}
@@ -556,7 +565,13 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 			sgs := make([]map[string]interface{}, 0, len(sgIDs))
 			for _, id := range sgIDs {
 				sgIDInt, _ := strconv.ParseInt(id, 10, 64)
-				sgs = append(sgs, map[string]interface{}{"vttSecurityGroupId": sgIDInt})
+				sgName := r.lookupSGName(ctx, id, vpcID)
+				sgs = append(sgs, map[string]interface{}{
+					"vttSecurityGroupId": sgIDInt,
+					"name":               sgName,
+					"defaultFromVpcOps":  false,
+					"id":                 id,
+				})
 			}
 			body["securityGroups"] = sgs
 		}
@@ -707,4 +722,26 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 	}
 
 	return nil
+}
+
+// lookupSGName fetches the real name of a Security Group by calling pathSGDetail.
+// If the API call fails or the name cannot be found, it falls back to returning the sgID.
+func (r *InstanceResource) lookupSGName(ctx context.Context, sgID string, vpcID string) string {
+	sgIDInt, _ := strconv.ParseInt(sgID, 10, 64)
+	
+	body := map[string]interface{}{
+		"security_group_id": sgIDInt,
+		"vpc_id":            vpcID,
+		"customer_id":       r.customerID,
+	}
+	
+	if apiResp, d := callAPI(ctx, r.client, pathSGDetail, body); !d.HasError() && apiResp != nil {
+		var raw map[string]interface{}
+		if err := json.Unmarshal(apiResp.Data, &raw); err == nil {
+			if n := asString(raw, "name"); n != "" {
+				return n
+			}
+		}
+	}
+	return sgID
 }
