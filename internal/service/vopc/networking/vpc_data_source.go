@@ -7,10 +7,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-log/tflog"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
@@ -25,6 +27,7 @@ var (
 type VPCDataSource struct {
 	client     *client.Client
 	customerID string
+	hostID     int64
 }
 
 type VPCDataSourceModel struct {
@@ -62,6 +65,7 @@ func (d *VPCDataSource) Configure(_ context.Context, req datasource.ConfigureReq
 	}
 	d.client = pd.Client
 	d.customerID = pd.CustomerID
+	d.hostID = pd.HostID
 }
 
 func (d *VPCDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -98,8 +102,18 @@ func (d *VPCDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 	}
 
 	// Lookup by name: list all VPCs then filter client-side.
+	if d.hostID == 0 {
+		resp.Diagnostics.AddError(
+			"host_id Required for name lookup",
+			"Searching VPC by name requires host_id. Set host_id in the provider configuration or VIETTELIDC_HOST_ID env var.",
+		)
+		return
+	}
 	body := map[string]interface{}{
 		"customer_id": d.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+		"hostId":      d.hostID,
 	}
 	apiResp, diags := callAPI(ctx, d.client, pathVPCList, body)
 	resp.Diagnostics.Append(diags...)
@@ -107,11 +121,15 @@ func (d *VPCDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 		return
 	}
 
+	tflog.Debug(ctx, "[VPCDataSource] raw list response", map[string]interface{}{"data": string(apiResp.Data)})
+	_ = os.WriteFile("vpc_list_raw.json", apiResp.Data, 0644)
+	_ = os.WriteFile("vpc_list_customerid.txt", []byte(fmt.Sprintf("customer_id=%s\n", d.customerID)), 0644)
 	items, err := decodeVPCList(apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("decode vpc list", err.Error())
 		return
 	}
+	tflog.Debug(ctx, "[VPCDataSource] decoded vpc list", map[string]interface{}{"count": len(items)})
 
 	var found *VPCDataSourceModel
 	for i := range items {

@@ -25,6 +25,7 @@ type SubnetDataSource struct {
 	client       *client.Client
 	customerID   string
 	defaultVpcID string
+	hostID       int64
 }
 
 // SubnetDataSourceModel mirrors the data source schema.
@@ -66,6 +67,7 @@ func (d *SubnetDataSource) Configure(_ context.Context, req datasource.Configure
 	d.client = pd.Client
 	d.customerID = pd.CustomerID
 	d.defaultVpcID = pd.DefaultVpcID
+	d.hostID = pd.HostID
 }
 
 func (d *SubnetDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
@@ -112,6 +114,7 @@ func (d *SubnetDataSource) Read(ctx context.Context, req datasource.ReadRequest,
 	body := map[string]interface{}{
 		"vpc_id":      vpcID,
 		"customer_id": d.customerID,
+		"hostId":      d.hostID,
 	}
 	apiResp, diags := callAPI(ctx, d.client, pathSubnetList, body)
 	resp.Diagnostics.Append(diags...)

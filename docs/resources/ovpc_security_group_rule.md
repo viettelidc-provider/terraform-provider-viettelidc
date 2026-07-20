@@ -39,6 +39,9 @@ resource "viettelidc_ovpc_security_group_rule" "app" {
 
 - `direction` (String) Direction of traffic: "in" (inbound/ingress) or "out" (outbound/egress).
 - `rule_type` (String) Rule type as shown in portal: "Custom TCP", "Custom UDP", "All TCP", "All UDP", "All ICMP - IPv4", "SSH", "DNS", "HTTP", "HTTPS", "IMAP".
+  - Rules requiring `port`: `"Custom TCP"`, `"Custom UDP"` — specify port number or range (e.g. `"22"`, `"8080-8090"`)
+  - Rules with predefined port (no `port` needed): `"SSH"` (22), `"HTTP"` (80), `"HTTPS"` (443), `"DNS"` (53), `"IMAP"` (143)
+  - Rules covering all ports (no `port` needed, provider auto-sends `"Any"`): `"All TCP"`, `"All UDP"`, `"All ICMP - IPv4"`
 - `security_group_id` (String)
 
 ### Optional
