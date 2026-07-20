@@ -108,11 +108,8 @@ func (d *InternetGatewayDataSource) Read(ctx context.Context, req datasource.Rea
 	}
 
 	body := map[string]interface{}{
-		"vpc_id":      vpcID,
-		"customer_id": d.customerID,
-		"page_index":  0,
-		"page_size":   1000,
-		"filters":     []map[string]interface{}{},
+		"vpcId":      vpcID,
+		"customerId": d.customerID,
 	}
 
 	apiResp, diags := callAPI(ctx, d.client, pathInternetGatewayList, body)
@@ -121,18 +118,15 @@ func (d *InternetGatewayDataSource) Read(ctx context.Context, req datasource.Rea
 		return
 	}
 
+	// Response shape: {"pageIndex":0,"pageSize":10,"totalItems":N,"items":[{"id":...,"name":...}]}
 	var listResp struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
-			Content []struct {
-				VttInternetGatewayID int64  `json:"vttInternetGatewayId"`
-				Name                 string `json:"name"`
-				Status               string `json:"status"`
-				VttSubnetID          int64  `json:"vttSubnetId"`
-				FloatingIPAddress    string `json:"floatingIpAddress"`
-			} `json:"content"`
-		} `json:"data"`
+		Items []struct {
+			ID                int64  `json:"id"`
+			Name              string `json:"name"`
+			Status            string `json:"status"`
+			VttSubnetID       int64  `json:"vttSubnetId"`
+			FloatingIPAddress string `json:"floatingIpAddress"`
+		} `json:"items"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
@@ -141,15 +135,15 @@ func (d *InternetGatewayDataSource) Read(ctx context.Context, req datasource.Rea
 	}
 
 	var found *struct {
-		VttInternetGatewayID int64  `json:"vttInternetGatewayId"`
-		Name                 string `json:"name"`
-		Status               string `json:"status"`
-		VttSubnetID          int64  `json:"vttSubnetId"`
-		FloatingIPAddress    string `json:"floatingIpAddress"`
+		ID                int64  `json:"id"`
+		Name              string `json:"name"`
+		Status            string `json:"status"`
+		VttSubnetID       int64  `json:"vttSubnetId"`
+		FloatingIPAddress string `json:"floatingIpAddress"`
 	}
 
-	for _, item := range listResp.Data.Content {
-		if !config.ID.IsNull() && fmt.Sprintf("%d", item.VttInternetGatewayID) == config.ID.ValueString() {
+	for _, item := range listResp.Items {
+		if !config.ID.IsNull() && fmt.Sprintf("%d", item.ID) == config.ID.ValueString() {
 			found = &item
 			break
 		}
@@ -165,7 +159,7 @@ func (d *InternetGatewayDataSource) Read(ctx context.Context, req datasource.Rea
 	}
 
 	result := InternetGatewayDataSourceModel{
-		ID:         types.StringValue(fmt.Sprintf("%d", found.VttInternetGatewayID)),
+		ID:         types.StringValue(fmt.Sprintf("%d", found.ID)),
 		Name:       types.StringValue(found.Name),
 		VpcID:      types.StringValue(vpcID),
 		Status:     types.StringValue(found.Status),

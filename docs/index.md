@@ -13,7 +13,23 @@ Interact with ViettelIdc resource.
 ## Example Usage
 
 ```terraform
-# Configuration-base authentication
+# IaC resources (ovpc_*) — root user auth, miền Bắc (host_id = 6)
+provider "viettelidc" {
+  email    = "user@example.com"
+  password = var.password
+  vpc_id   = "12345"
+  host_id  = 6  # 6 = Miền Bắc, 7 = Miền Nam
+}
+
+# IaC resources (ovpc_*) — root user auth, miền Nam (host_id = 7)
+provider "viettelidc" {
+  email    = "user@example.com"
+  password = var.password
+  vpc_id   = "12345"
+  host_id  = 7  # 6 = Miền Bắc, 7 = Miền Nam
+}
+
+# VOKS resources (voks_*) — IAM user auth
 provider "viettelidc" {
   domain_id = "3b3e6994-4b04-40ea-bedc-5befd874d73a"
   username  = "iac"
@@ -29,7 +45,10 @@ provider "viettelidc" {
 
 - `domain_id` (String) DomainId for ViettelIdc API.
 - `email` (String) Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.
-- `host_id` (Number) Host ID for IaC/VDKS/DBS resources. Env: VIETTELIDC_HOST_ID.
+- `host_id` (Number) Host ID xác định vùng triển khai cho IaC/VDKS/DBS resources. Env: `VIETTELIDC_HOST_ID`.
+  - `6` = Miền Bắc
+  - `7` = Miền Nam
+  - **Bắt buộc** khi dùng data source `viettelidc_ovpc_vpc` với lookup theo `name`.
 - `mfa_code` (String) Muti-factor Authentication code for ViettelIdc API.
 - `password` (String) Password for ViettelIdc API.
 - `username` (String) Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.

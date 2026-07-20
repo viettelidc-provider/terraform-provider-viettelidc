@@ -144,11 +144,11 @@ func (r *NatGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	}
 
 	body := map[string]interface{}{
-		"vpc_id":                  vpcID,
-		"customer_id":             r.customerID,
+		"vpc_id":                  parseInt(vpcID),
+		"customer_id":             parseInt(r.customerID),
 		"name":                    plan.Name.ValueString(),
-		"vtt_subnet_id":           plan.SubnetID.ValueString(),
-		"vtt_internet_gateway_id": plan.InternetGatewayID.ValueString(),
+		"vtt_subnet_id":           parseInt(plan.SubnetID.ValueString()),
+		"vtt_internet_gateway_id": parseInt(plan.InternetGatewayID.ValueString()),
 		"connect_type":            plan.ConnectType.ValueBool(),
 	}
 

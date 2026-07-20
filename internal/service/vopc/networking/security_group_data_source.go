@@ -149,7 +149,7 @@ func (d *SecurityGroupDataSource) Read(ctx context.Context, req datasource.ReadR
 }
 
 func decodeSGList(resp *client.APIResponse) ([]map[string]interface{}, error) {
-	// CSA list response may be wrapped in data.content or directly as an array.
+	// CSA list response may be wrapped in data.content, items, data, or directly as an array.
 	var raw interface{}
 	if err := json.Unmarshal(resp.Data, &raw); err != nil {
 		return nil, fmt.Errorf("decode list: %w", err)
@@ -158,13 +158,12 @@ func decodeSGList(resp *client.APIResponse) ([]map[string]interface{}, error) {
 	if arr, ok := raw.([]interface{}); ok {
 		return toMapSlice(arr), nil
 	}
-	// Try nested data.content.
+	// Try nested shapes: items, content, data.
 	if m, ok := raw.(map[string]interface{}); ok {
-		if content, ok := m["content"].([]interface{}); ok {
-			return toMapSlice(content), nil
-		}
-		if list, ok := m["data"].([]interface{}); ok {
-			return toMapSlice(list), nil
+		for _, key := range []string{"items", "content", "data"} {
+			if v, ok := m[key].([]interface{}); ok {
+				return toMapSlice(v), nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("unexpected list structure: %T", raw)
