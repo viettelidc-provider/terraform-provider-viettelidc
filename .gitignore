@@ -36,3 +36,4 @@ website/vendor
 /_smoke
 scratch/dump_jwt.py
 /scratch
+TOKEN

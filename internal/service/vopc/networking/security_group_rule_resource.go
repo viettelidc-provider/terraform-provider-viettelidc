@@ -367,6 +367,13 @@ func (r *SecurityGroupRuleResource) buildRuleBody(m *SecurityGroupRuleResourceMo
 
 	if v := m.Port.ValueString(); v != "" {
 		body["port"] = v
+	} else {
+		// "All *" rule types require port="Any"; predefined types (SSH, HTTP, etc.)
+		// and Custom TCP/UDP require an explicit port from the user.
+		rt := strings.ToUpper(m.RuleType.ValueString())
+		if strings.HasPrefix(rt, "ALL ") {
+			body["port"] = "Any"
+		}
 	}
 
 	// source / destination fields required by the API.
@@ -514,6 +521,8 @@ func mapSGRuleResponse(item map[string]interface{}, m *SecurityGroupRuleResource
 	}
 	if v := asString(item, "sourceIP"); v != "" {
 		m.SourceIP = types.StringValue(v)
+	} else {
+		m.SourceIP = types.StringValue("")
 	}
 	// Always resolve destination_ip to avoid Unknown after apply.
 	if v := asString(item, "destinationIP"); v != "" {
