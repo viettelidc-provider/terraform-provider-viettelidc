@@ -17,7 +17,8 @@ resource "viettelidc_ovpc_instance" "vm" {
   subnet_id          = viettelidc_ovpc_subnet.private.id
   admin_pass         = "MySecretPass123!"
   cpu                = 2
-  memory             = 4096
+  memory             = 4      # GB
+  storage            = 40     # GiB
   storage_type       = "SSD"
   key_pair_name      = viettelidc_ovpc_key_pair.deploy.key_name
   security_group_ids = [viettelidc_ovpc_security_group.web.id]
@@ -31,6 +32,7 @@ resource "viettelidc_ovpc_instance" "vm" {
 
 ### Required
 
+- `storage` (Number) Root volume size in GiB. Must be greater than 0.
 - `subnet_id` (String) Subnet to attach the primary NIC to.
 - `template_id` (Number) VM template (image) integer ID.
 
@@ -43,7 +45,7 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `key_pair_name` (String) Key pair name to inject into the instance.
 - `memory` (Number) RAM in GB.
 - `security_group_ids` (List of String) List of Security Group IDs to attach.
-- `storage_type` (String) Root volume storage type: "SSD" or "HDD". Defaults to "HDD".
+- `storage_type` (String) Root volume storage type: `"SSD"` or `"HDD"`. Defaults to `"HDD"`.
 - `vpc_id` (String) VPC ID.
 
 ### Read-Only

@@ -18,7 +18,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
@@ -52,6 +54,7 @@ type InstanceResourceModel struct {
 	CPU              types.Int64  `tfsdk:"cpu"`
 	Memory           types.Int64  `tfsdk:"memory"`
 	StorageType      types.String `tfsdk:"storage_type"`
+	Storage          types.Int64  `tfsdk:"storage"`
 	KeyPairName      types.String `tfsdk:"key_pair_name"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
 	SecurityGroupIDs types.List   `tfsdk:"security_group_ids"`
@@ -196,6 +199,16 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"storage": schema.Int64Attribute{
+				Required:    true,
+				Description: "Root volume size in GiB. Must be greater than 0.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
 				},
 			},
 			"key_pair_name": schema.StringAttribute{
@@ -540,8 +553,9 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 	if v := m.StorageType.ValueString(); v != "" {
 		storageType = v
 	}
+	storageSize := m.Storage.ValueInt64()
 	instanceType := map[string]interface{}{
-		"storage":     20,
+		"storage":     storageSize,
 		"storageType": storageType,
 	}
 	if v := m.KeyPairName.ValueString(); v != "" {
