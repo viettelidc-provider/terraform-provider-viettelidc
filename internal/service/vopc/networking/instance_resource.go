@@ -120,7 +120,7 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"memory": schema.Int64Attribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "RAM in MB.",
+				Description: "RAM in GB.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.UseStateForUnknown(),
 				},
