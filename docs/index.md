@@ -6,35 +6,43 @@ description: |-
   Interact with ViettelIdc resource.
 ---
 
-# viettelidc Provider
 
-Interact with ViettelIdc resource.
+## Provider Authentication
 
-## Example Usage
+### IaC Resources (`viettelidc_ovpc_*`, `viettelidc_vdbs_*`, `viettelidc_voks_*`)
+
+Use **root user** credentials (`email` + `password`). The `host_id` identifies the deployment region:
+- `host_id = 6` — North region
+- `host_id = 7` — South region
 
 ```terraform
-# IaC resources (ovpc_*) — root user auth, miền Bắc (host_id = 6)
+# Root user auth (ovpc, vdbs, voks resources)
 provider "viettelidc" {
-  email    = "user@example.com"
+  email    = "admin@company.com"
   password = var.password
-  vpc_id   = "12345"
-  host_id  = 6  # 6 = Miền Bắc, 7 = Miền Nam
+  vpc_id   = var.vpc_id
+  host_id  = 7
 }
 
-# IaC resources (ovpc_*) — root user auth, miền Nam (host_id = 7)
-provider "viettelidc" {
-  email    = "user@example.com"
-  password = var.password
-  vpc_id   = "12345"
-  host_id  = 7  # 6 = Miền Bắc, 7 = Miền Nam
-}
-
-# VOKS resources (voks_*) — IAM user auth
+# IAM user auth (same provider block, use username + domain_id instead of email)
 provider "viettelidc" {
   domain_id = "3b3e6994-4b04-40ea-bedc-5befd874d73a"
-  username  = "iac"
-  password  = "Vtdc@12345"
-  mfa_code  = var.mfa_code
+  username  = "iac-user"
+  password  = var.password
+  mfa_code  = var.mfa_code  # omit if MFA is not enabled
+}
+```
+
+### VOKS Resources (`viettelidc_voks_*`)
+
+Use **IAM user** credentials (`username` + `domain_id` + `password`). MFA code is optional unless MFA is enforced on the account.
+
+```terraform
+provider "viettelidc" {
+  domain_id = "3b3e6994-4b04-40ea-bedc-5befd874d73a"
+  username  = "iac-user"
+  password  = var.password
+  mfa_code  = var.mfa_code  # omit if MFA is not enabled
 }
 ```
 
@@ -42,14 +50,13 @@ provider "viettelidc" {
 ## Schema
 
 ### Optional
-
 - `domain_id` (String) DomainId for ViettelIdc API.
 - `email` (String) Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.
-- `host_id` (Number) Host ID xác định vùng triển khai cho IaC/VDKS/DBS resources. Env: `VIETTELIDC_HOST_ID`.
-  - `6` = Miền Bắc
-  - `7` = Miền Nam
-  - **Bắt buộc** khi dùng data source `viettelidc_ovpc_vpc` với lookup theo `name`.
-- `mfa_code` (String) Muti-factor Authentication code for ViettelIdc API.
+- `host_id` (Number) Host ID identifying the deployment region for IaC/VDKS/DBS resources. Env: `VIETTELIDC_HOST_ID`.
+  - `6` = North region
+  - `7` = South region
+  - **Required** when using `viettelidc_ovpc_vpc` data source with name-based lookup.
+- `mfa_code` (String) Multi-factor Authentication code. Optional — only required when MFA is enabled on the IAM user account.
 - `password` (String) Password for ViettelIdc API.
-- `username` (String) Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.
-- `vpc_id` (String) Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.
+- `username` (String) Username (IAM user) for VOKS resources. Requires `domain_id`. Env: `VIETTELIDC_USERNAME`.
+- `vpc_id` (String) Default VPC ID for IaC resources. Env: `VIETTELIDC_VPC_ID`.

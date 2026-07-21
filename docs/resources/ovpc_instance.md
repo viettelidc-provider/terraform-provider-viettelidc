@@ -41,7 +41,7 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `cpu` (Number) Number of vCPUs.
 - `instance_type_id` (Number) Instance type (package) integer ID.
 - `key_pair_name` (String) Key pair name to inject into the instance.
-- `memory` (Number) RAM in MB.
+- `memory` (Number) RAM in GB.
 - `security_group_ids` (List of String) List of Security Group IDs to attach.
 - `storage_type` (String) Root volume storage type: "SSD" or "HDD". Defaults to "HDD".
 - `vpc_id` (String) VPC ID.

@@ -14,7 +14,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -84,12 +83,8 @@ func (r *NatGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				},
 			},
 			"connect_type": schema.BoolAttribute{
-				Optional:    true,
 				Computed:    true,
-				Description: "Connection type. If true, uses dedicated connection.",
-				PlanModifiers: []planmodifier.Bool{
-					boolplanmodifier.RequiresReplace(),
-				},
+				Description: "Connection type. Always true (public connection).",
 			},
 			"vpc_id": schema.StringAttribute{
 				Optional:    true,
@@ -149,7 +144,7 @@ func (r *NatGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 		"name":                    plan.Name.ValueString(),
 		"vtt_subnet_id":           parseInt(plan.SubnetID.ValueString()),
 		"vtt_internet_gateway_id": parseInt(plan.InternetGatewayID.ValueString()),
-		"connect_type":            plan.ConnectType.ValueBool(),
+		"connect_type":            true,
 	}
 
 	apiResp, diags := callAPI(ctx, r.client, pathNatGatewayCreate, body)
@@ -257,7 +252,6 @@ func (r *NatGatewayResource) readAndMerge(ctx context.Context, model *NatGateway
 			ID          int64  `json:"id"`
 			Name        string `json:"name"`
 			VttSubnetID int64  `json:"vttSubnetId"`
-			ConnectType bool   `json:"connectType"`
 			NicIP       string `json:"nicIp"`
 			Status      string `json:"status"`
 			CreatedAt   string `json:"createdAt"`
@@ -275,7 +269,7 @@ func (r *NatGatewayResource) readAndMerge(ctx context.Context, model *NatGateway
 		if fmt.Sprintf("%d", item.ID) == targetID {
 			model.Name = types.StringValue(item.Name)
 			model.SubnetID = types.StringValue(fmt.Sprintf("%d", item.VttSubnetID))
-			model.ConnectType = types.BoolValue(item.ConnectType)
+			model.ConnectType = types.BoolValue(true)
 			model.FloatingIP = types.StringValue(item.NicIP)
 			model.FloatingIPID = types.StringValue("")
 			model.Status = types.StringValue(item.Status)
