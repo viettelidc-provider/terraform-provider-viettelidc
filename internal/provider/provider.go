@@ -396,6 +396,7 @@ func (p *viettelidcProvider) Resources(_ context.Context) []func() resource.Reso
 		iacNetworking.NewVolumeAttachmentResource,
 		iacNetworking.NewCertificateResource,
 		iacNetworking.NewBackupPlanResource,
+		iacNetworking.NewBackupSchedulerResource,
 		// IaC vpc
 		iacVpc.NewAutoscaleGroupResource,
 		iacVpc.NewLaunchTemplateResource,
