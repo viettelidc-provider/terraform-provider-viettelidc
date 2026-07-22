@@ -33,15 +33,36 @@ data "viettelidc_ovpc_load_balancer" "web" {
 - `admin_state_up` (Boolean) Administrative state of the Load Balancer.
 - `description` (String) Description of the Load Balancer.
 - `floating_ip_id` (String) ID of the floating IP assigned to the Load Balancer.
+- `health_monitors` (Attributes List) Health monitors attached to the Load Balancer's pools. (see [below for nested schema](#nestedatt--health_monitors))
 - `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
 - `loadbalancer_type` (String) Type of the Load Balancer.
+- `members` (Attributes List) Pool members currently behind the Load Balancer. Unlike the resource's pool_members, which records what was asked for at creation, this is what the API reports right now. (see [below for nested schema](#nestedatt--members))
 - `operating_status` (String) Operating status of the Load Balancer.
 - `package_type` (String) Package type of the Load Balancer.
 - `pools` (List of Object) List of pools associated with the Load Balancer. (see [below for nested schema](#nestedatt--pools))
 - `provisioning_status` (String) Provisioning status of the Load Balancer.
 - `status` (String) Current status of the Load Balancer.
 - `subnet_id` (String) ID of the subnet where the Load Balancer is placed.
+
+<a id="nestedatt--health_monitors"></a>
+### Nested Schema for `health_monitors`
+
+Read-Only:
+
+- `delay` (Number) Seconds between checks.
+- `id` (String) Health monitor ID.
+- `max_retries` (Number) Successes needed to mark a member up.
+- `max_retries_down` (Number) Failures needed to mark a member down.
+- `name` (String) Monitor name.
+- `operating_status` (String) Operating status.
+- `pool_id` (String) Pool the monitor checks.
+- `pool_name` (String) Pool name.
+- `provisioning_status` (String) Provisioning status.
+- `status` (String) Monitor status.
+- `timeout` (Number) Seconds before a check times out.
+- `type` (String) Check type, for example PING.
+
 
 <a id="nestedatt--listeners"></a>
 ### Nested Schema for `listeners`
@@ -56,6 +77,25 @@ Read-Only:
 - `x_forwarded_for` (Boolean)
 - `x_forwarded_port` (Boolean)
 - `x_forwarded_proto` (Boolean)
+
+
+<a id="nestedatt--members"></a>
+### Nested Schema for `members`
+
+Read-Only:
+
+- `backup` (Boolean) Whether this is a backup member.
+- `id` (String) Member ID.
+- `ip_address` (String) Member IP.
+- `name` (String) Member name, usually the VM name.
+- `operating_status` (String) Operating status.
+- `pool_id` (String) Pool the member belongs to.
+- `pool_name` (String) Pool name.
+- `port` (Number) Port traffic is forwarded to.
+- `provisioning_status` (String) Provisioning status.
+- `status` (String) Member status.
+- `subnet_id` (String) Subnet the member sits in.
+- `weight` (Number) Load balancing weight.
 
 
 <a id="nestedatt--pools"></a>

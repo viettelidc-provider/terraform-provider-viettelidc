@@ -106,6 +106,8 @@ const (
 	pathLoadBalancerList        = "/csa/api/v1/networking/loadbalancer/list"
 	pathLoadBalancerListeners   = "/csa/api/v1/networking/loadbalancer/listener-by-lb/all"
 	pathLoadBalancerPools       = "/csa/api/v1/networking/loadbalancer/pool-by-lb/all"
+	pathLoadBalancerMembers     = "/csa/api/v1/networking/loadbalancer/member-by-lb/all"
+	pathLoadBalancerMonitors    = "/csa/api/v1/networking/loadbalancer/monitor-by-lb/all"
 	pathLoadBalancerListLayer7  = "/csa/api/v1/networking/loadbalancer/list-all-layer-7"
 	pathLoadBalancerListTypes   = "/csa/api/v1/networking/loadbalancer/list-loadbalancer-type"
 	pathLoadBalancerAttachedNic = "/csa/api/v1/networking/loadbalancer/attached-nic/list"
@@ -120,9 +122,9 @@ const (
 
 	pathBackupRecordList = "/csa/api/v1/storage/backup/record/list"
 
-	pathRegionHostsByCust    = "/csa/api/v1/region/list-host-by-customer"
-	pathRegionHostsByOrder   = "/csa/api/v1/region/list-host-by-order"
-	pathVMTemplateList = "/csa/api/v1/host-information/list-template"
+	pathRegionHostsByCust  = "/csa/api/v1/region/list-host-by-customer"
+	pathRegionHostsByOrder = "/csa/api/v1/region/list-host-by-order"
+	pathVMTemplateList     = "/csa/api/v1/host-information/list-template"
 )
 
 // listWarningThreshold triggers a Diagnostics warning on list-style data

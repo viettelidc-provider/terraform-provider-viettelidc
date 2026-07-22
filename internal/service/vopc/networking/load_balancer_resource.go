@@ -40,20 +40,24 @@ type LoadBalancerResource struct {
 }
 
 type LoadBalancerResourceModel struct {
-	ID               types.String      `tfsdk:"id"`
-	Name             types.String      `tfsdk:"name"`
-	Description      types.String      `tfsdk:"description"`
-	SubnetID         types.String      `tfsdk:"subnet_id"`
-	FloatingIPID     types.String      `tfsdk:"floating_ip_id"`
-	LoadBalancerType types.String      `tfsdk:"loadbalancer_type"`
-	PackageType      types.String      `tfsdk:"package_type"`
-	VpcID            types.String      `tfsdk:"vpc_id"`
-	AdminStateUp     types.Bool        `tfsdk:"admin_state_up"`
-	Status           types.String      `tfsdk:"status"`
-	OperatingStatus  types.String      `tfsdk:"operating_status"`
-	Listeners        types.List        `tfsdk:"listeners"`
-	Pools            types.List        `tfsdk:"pools"`
-	PoolMembers      []PoolMemberInput `tfsdk:"pool_members"`
+	ID               types.String `tfsdk:"id"`
+	Name             types.String `tfsdk:"name"`
+	Description      types.String `tfsdk:"description"`
+	SubnetID         types.String `tfsdk:"subnet_id"`
+	FloatingIPID     types.String `tfsdk:"floating_ip_id"`
+	LoadBalancerType types.String `tfsdk:"loadbalancer_type"`
+	PackageType      types.String `tfsdk:"package_type"`
+	VpcID            types.String `tfsdk:"vpc_id"`
+	AdminStateUp     types.Bool   `tfsdk:"admin_state_up"`
+	Status           types.String `tfsdk:"status"`
+	OperatingStatus  types.String `tfsdk:"operating_status"`
+
+	IPAddress            types.String      `tfsdk:"ip_address"`
+	ProvisioningStatus   types.String      `tfsdk:"provisioning_status"`
+	IsPublicLoadBalancer types.Bool        `tfsdk:"is_public_loadbalancer"`
+	Listeners            types.List        `tfsdk:"listeners"`
+	Pools                types.List        `tfsdk:"pools"`
+	PoolMembers          []PoolMemberInput `tfsdk:"pool_members"`
 }
 
 type PoolMemberInput struct {
@@ -168,6 +172,18 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			"operating_status": schema.StringAttribute{
 				Computed:    true,
 				Description: "Operating status of the Load Balancer.",
+			},
+			"ip_address": schema.StringAttribute{
+				Computed:    true,
+				Description: "Private IP the Load Balancer listens on, assigned at creation.",
+			},
+			"provisioning_status": schema.StringAttribute{
+				Computed:    true,
+				Description: "Provisioning status of the Load Balancer.",
+			},
+			"is_public_loadbalancer": schema.BoolAttribute{
+				Computed:    true,
+				Description: "Whether the Load Balancer is reachable from the internet.",
 			},
 			"listeners": schema.ListAttribute{
 				Computed:    true,
@@ -562,15 +578,18 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 	}
 
 	var detailResp struct {
-		VttLoadBalancerID int64  `json:"vttLoadBalancerId"`
-		Name              string `json:"name"`
-		Description       string `json:"description"`
-		VttSubnetID       int64  `json:"vttSubnetId"`
-		LoadBalancerType  string `json:"vttLoadbalancerTypeName"`
-		PackageType       string `json:"loadbalancerTypeName"`
-		AdminStateUp      bool   `json:"adminStateUp"`
-		Status            string `json:"status"`
-		OperatingStatus   string `json:"operatingStatus"`
+		VttLoadBalancerID    int64  `json:"vttLoadBalancerId"`
+		Name                 string `json:"name"`
+		Description          string `json:"description"`
+		VttSubnetID          int64  `json:"vttSubnetId"`
+		LoadBalancerType     string `json:"vttLoadbalancerTypeName"`
+		PackageType          string `json:"loadbalancerTypeName"`
+		AdminStateUp         bool   `json:"adminStateUp"`
+		Status               string `json:"status"`
+		OperatingStatus      string `json:"operatingStatus"`
+		IPAddress            string `json:"ipAddress"`
+		ProvisioningStatus   string `json:"provisioningStatus"`
+		IsPublicLoadbalancer bool   `json:"isPublicLoadbalancer"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &detailResp); err != nil {
@@ -589,6 +608,9 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 	model.Name = types.StringValue(detailResp.Name)
 	model.Description = types.StringValue(detailResp.Description)
 	model.SubnetID = types.StringValue(fmt.Sprintf("%d", detailResp.VttSubnetID))
+	model.IPAddress = types.StringValue(detailResp.IPAddress)
+	model.ProvisioningStatus = types.StringValue(detailResp.ProvisioningStatus)
+	model.IsPublicLoadBalancer = types.BoolValue(detailResp.IsPublicLoadbalancer)
 	model.LoadBalancerType = types.StringValue(detailResp.LoadBalancerType)
 	// Preserve the user-configured PackageType if the API maps to the same lb type code.
 	// API normalizes "LB Small" → "LB Compact" (both map to lbTypeCode=1).

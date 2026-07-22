@@ -59,9 +59,12 @@ resource "viettelidc_ovpc_load_balancer" "web" {
 ### Read-Only
 
 - `id` (String) Load Balancer ID assigned by the system (vttLoadBalancerId).
+- `ip_address` (String) Private IP the Load Balancer listens on, assigned at creation.
+- `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
 - `operating_status` (String) Operating status of the Load Balancer.
 - `pools` (List of Object) List of pools associated with the Load Balancer. (see [below for nested schema](#nestedatt--pools))
+- `provisioning_status` (String) Provisioning status of the Load Balancer.
 - `status` (String) Current status of the Load Balancer.
 
 <a id="nestedatt--pool_members"></a>

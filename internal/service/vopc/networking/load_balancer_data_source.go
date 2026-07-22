@@ -44,8 +44,45 @@ type LoadBalancerDataSourceModel struct {
 	ProvisioningStatus   types.String `tfsdk:"provisioning_status"`
 	IsPublicLoadBalancer types.Bool   `tfsdk:"is_public_loadbalancer"`
 
+	Members        []LoadBalancerMemberItem  `tfsdk:"members"`
+	HealthMonitors []LoadBalancerMonitorItem `tfsdk:"health_monitors"`
+
 	Listeners types.List `tfsdk:"listeners"`
 	Pools     types.List `tfsdk:"pools"`
+}
+
+// LoadBalancerMemberItem is one row of member-by-lb/all: what is actually
+// behind the load balancer right now, including instances an autoscale group
+// added that Terraform never created.
+type LoadBalancerMemberItem struct {
+	ID                 types.String `tfsdk:"id"`
+	PoolID             types.String `tfsdk:"pool_id"`
+	PoolName           types.String `tfsdk:"pool_name"`
+	Name               types.String `tfsdk:"name"`
+	IPAddress          types.String `tfsdk:"ip_address"`
+	SubnetID           types.String `tfsdk:"subnet_id"`
+	Port               types.Int64  `tfsdk:"port"`
+	Weight             types.Int64  `tfsdk:"weight"`
+	Backup             types.Bool   `tfsdk:"backup"`
+	Status             types.String `tfsdk:"status"`
+	OperatingStatus    types.String `tfsdk:"operating_status"`
+	ProvisioningStatus types.String `tfsdk:"provisioning_status"`
+}
+
+// LoadBalancerMonitorItem is one row of monitor-by-lb/all.
+type LoadBalancerMonitorItem struct {
+	ID                 types.String `tfsdk:"id"`
+	PoolID             types.String `tfsdk:"pool_id"`
+	PoolName           types.String `tfsdk:"pool_name"`
+	Name               types.String `tfsdk:"name"`
+	Type               types.String `tfsdk:"type"`
+	Delay              types.Int64  `tfsdk:"delay"`
+	Timeout            types.Int64  `tfsdk:"timeout"`
+	MaxRetries         types.Int64  `tfsdk:"max_retries"`
+	MaxRetriesDown     types.Int64  `tfsdk:"max_retries_down"`
+	Status             types.String `tfsdk:"status"`
+	OperatingStatus    types.String `tfsdk:"operating_status"`
+	ProvisioningStatus types.String `tfsdk:"provisioning_status"`
 }
 
 func NewLoadBalancerDataSource() datasource.DataSource { return &LoadBalancerDataSource{} }
@@ -137,6 +174,46 @@ func (d *LoadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Computed:    true,
 				Description: "Whether the Load Balancer is reachable from the internet.",
 			},
+			"members": schema.ListNestedAttribute{
+				Computed:    true,
+				Description: "Pool members currently behind the Load Balancer. Unlike the resource's pool_members, which records what was asked for at creation, this is what the API reports right now.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":                  schema.StringAttribute{Computed: true, Description: "Member ID."},
+						"pool_id":             schema.StringAttribute{Computed: true, Description: "Pool the member belongs to."},
+						"pool_name":           schema.StringAttribute{Computed: true, Description: "Pool name."},
+						"name":                schema.StringAttribute{Computed: true, Description: "Member name, usually the VM name."},
+						"ip_address":          schema.StringAttribute{Computed: true, Description: "Member IP."},
+						"subnet_id":           schema.StringAttribute{Computed: true, Description: "Subnet the member sits in."},
+						"port":                schema.Int64Attribute{Computed: true, Description: "Port traffic is forwarded to."},
+						"weight":              schema.Int64Attribute{Computed: true, Description: "Load balancing weight."},
+						"backup":              schema.BoolAttribute{Computed: true, Description: "Whether this is a backup member."},
+						"status":              schema.StringAttribute{Computed: true, Description: "Member status."},
+						"operating_status":    schema.StringAttribute{Computed: true, Description: "Operating status."},
+						"provisioning_status": schema.StringAttribute{Computed: true, Description: "Provisioning status."},
+					},
+				},
+			},
+			"health_monitors": schema.ListNestedAttribute{
+				Computed:    true,
+				Description: "Health monitors attached to the Load Balancer's pools.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":                  schema.StringAttribute{Computed: true, Description: "Health monitor ID."},
+						"pool_id":             schema.StringAttribute{Computed: true, Description: "Pool the monitor checks."},
+						"pool_name":           schema.StringAttribute{Computed: true, Description: "Pool name."},
+						"name":                schema.StringAttribute{Computed: true, Description: "Monitor name."},
+						"type":                schema.StringAttribute{Computed: true, Description: "Check type, for example PING."},
+						"delay":               schema.Int64Attribute{Computed: true, Description: "Seconds between checks."},
+						"timeout":             schema.Int64Attribute{Computed: true, Description: "Seconds before a check times out."},
+						"max_retries":         schema.Int64Attribute{Computed: true, Description: "Successes needed to mark a member up."},
+						"max_retries_down":    schema.Int64Attribute{Computed: true, Description: "Failures needed to mark a member down."},
+						"status":              schema.StringAttribute{Computed: true, Description: "Monitor status."},
+						"operating_status":    schema.StringAttribute{Computed: true, Description: "Operating status."},
+						"provisioning_status": schema.StringAttribute{Computed: true, Description: "Provisioning status."},
+					},
+				},
+			},
 			"listeners": schema.ListAttribute{
 				Computed:    true,
 				ElementType: types.ObjectType{AttrTypes: listenerAttrTypes},
@@ -181,6 +258,8 @@ func (d *LoadBalancerDataSource) Read(ctx context.Context, req datasource.ReadRe
 	// Fetch listeners and pools using helper methods
 	d.fetchListeners(ctx, result, &resp.Diagnostics)
 	d.fetchPools(ctx, result, &resp.Diagnostics)
+	d.fetchMembers(ctx, result, &resp.Diagnostics)
+	d.fetchHealthMonitors(ctx, result, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
 }
@@ -407,4 +486,107 @@ func (d *LoadBalancerDataSource) fetchPools(ctx context.Context, model *LoadBala
 	}}, pools)
 	diags.Append(listDiags...)
 	model.Pools = listType
+}
+
+// fetchMembers reads member-by-lb/all. The route was missing from kong.yaml
+// until this change, so an older gateway answers 404 here.
+func (d *LoadBalancerDataSource) fetchMembers(ctx context.Context, model *LoadBalancerDataSourceModel, diags *diag.Diagnostics) {
+	body := map[string]interface{}{
+		"vpc_id":            model.VpcID.ValueString(),
+		"customer_id":       d.customerID,
+		"vttLoadBalancerId": parseInt(model.ID.ValueString()),
+	}
+	apiResp, callDiags := callAPI(ctx, d.client, pathLoadBalancerMembers, body)
+	diags.Append(callDiags...)
+	if diags.HasError() {
+		return
+	}
+
+	var listResp []struct {
+		ID                    string `json:"id"`
+		VttLoadBalancerPoolID int64  `json:"vttLoadBalancerPoolId"`
+		PoolName              string `json:"poolName"`
+		Name                  string `json:"name"`
+		IPAddress             string `json:"ipAddress"`
+		VttSubnetID           int64  `json:"vttSubnetId"`
+		Port                  int64  `json:"port"`
+		Weight                int64  `json:"weight"`
+		Backup                bool   `json:"backup"`
+		Status                string `json:"status"`
+		OperatingStatus       string `json:"operatingStatus"`
+		ProvisioningStatus    string `json:"provisioningStatus"`
+	}
+	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
+		diags.AddError("Parse Error", err.Error())
+		return
+	}
+
+	model.Members = make([]LoadBalancerMemberItem, 0, len(listResp))
+	for _, it := range listResp {
+		model.Members = append(model.Members, LoadBalancerMemberItem{
+			ID:                 types.StringValue(it.ID),
+			PoolID:             types.StringValue(fmt.Sprintf("%d", it.VttLoadBalancerPoolID)),
+			PoolName:           types.StringValue(it.PoolName),
+			Name:               types.StringValue(it.Name),
+			IPAddress:          types.StringValue(it.IPAddress),
+			SubnetID:           types.StringValue(fmt.Sprintf("%d", it.VttSubnetID)),
+			Port:               types.Int64Value(it.Port),
+			Weight:             types.Int64Value(it.Weight),
+			Backup:             types.BoolValue(it.Backup),
+			Status:             types.StringValue(it.Status),
+			OperatingStatus:    types.StringValue(it.OperatingStatus),
+			ProvisioningStatus: types.StringValue(it.ProvisioningStatus),
+		})
+	}
+}
+
+// fetchHealthMonitors reads monitor-by-lb/all, same caveat about the route.
+func (d *LoadBalancerDataSource) fetchHealthMonitors(ctx context.Context, model *LoadBalancerDataSourceModel, diags *diag.Diagnostics) {
+	body := map[string]interface{}{
+		"vpc_id":            model.VpcID.ValueString(),
+		"customer_id":       d.customerID,
+		"vttLoadBalancerId": parseInt(model.ID.ValueString()),
+	}
+	apiResp, callDiags := callAPI(ctx, d.client, pathLoadBalancerMonitors, body)
+	diags.Append(callDiags...)
+	if diags.HasError() {
+		return
+	}
+
+	var listResp []struct {
+		ID                    string `json:"id"`
+		VttLoadBalancerPoolID int64  `json:"vttLoadBalancerPoolId"`
+		PoolName              string `json:"poolName"`
+		Name                  string `json:"name"`
+		Type                  string `json:"type"`
+		Delay                 int64  `json:"delay"`
+		Timeout               int64  `json:"timeout"`
+		MaxRetries            int64  `json:"maxRetries"`
+		MaxRetriesDown        int64  `json:"maxRetriesDown"`
+		Status                string `json:"status"`
+		OperatingStatus       string `json:"operatingStatus"`
+		ProvisioningStatus    string `json:"provisioningStatus"`
+	}
+	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
+		diags.AddError("Parse Error", err.Error())
+		return
+	}
+
+	model.HealthMonitors = make([]LoadBalancerMonitorItem, 0, len(listResp))
+	for _, it := range listResp {
+		model.HealthMonitors = append(model.HealthMonitors, LoadBalancerMonitorItem{
+			ID:                 types.StringValue(it.ID),
+			PoolID:             types.StringValue(fmt.Sprintf("%d", it.VttLoadBalancerPoolID)),
+			PoolName:           types.StringValue(it.PoolName),
+			Name:               types.StringValue(it.Name),
+			Type:               types.StringValue(it.Type),
+			Delay:              types.Int64Value(it.Delay),
+			Timeout:            types.Int64Value(it.Timeout),
+			MaxRetries:         types.Int64Value(it.MaxRetries),
+			MaxRetriesDown:     types.Int64Value(it.MaxRetriesDown),
+			Status:             types.StringValue(it.Status),
+			OperatingStatus:    types.StringValue(it.OperatingStatus),
+			ProvisioningStatus: types.StringValue(it.ProvisioningStatus),
+		})
+	}
 }
