@@ -66,6 +66,7 @@ func (k *kubeconfigDatasource) Schema(ctx context.Context, request datasource.Sc
 			"value": schema.StringAttribute{
 				Description: "The kubeconfig file is essential for configuring access to the cluster, providing connection details, authentication credentials, and other configurations.",
 				Computed:    true,
+				Sensitive:   true,
 			},
 		},
 	}

@@ -12,11 +12,19 @@ Interact with ViettelIdc resource.
 ## Example Usage
 
 ```terraform
-# Configuration-base authentication
+# Configuration-based authentication.
+#
+# Never commit a password. Read it from a variable or the environment:
+# VIETTELIDC_EMAIL / VIETTELIDC_PASSWORD / VIETTELIDC_MFA_CODE.
+variable "viettelidc_password" {
+  type      = string
+  sensitive = true
+}
+
 provider "viettelidc" {
   domain_id = "3b3e6994-4b04-40ea-bedc-5befd874d73a"
   username  = "iac"
-  password  = "Vtdc@12345"
+  password  = var.viettelidc_password
   mfa_code  = var.mfa_code
 }
 ```
@@ -29,7 +37,7 @@ provider "viettelidc" {
 - `domain_id` (String) DomainId for ViettelIdc API.
 - `email` (String) Email (root user) for IaC resources. Env: VIETTELIDC_EMAIL.
 - `host_id` (Number) Host ID for IaC/VDKS/DBS resources. Env: VIETTELIDC_HOST_ID.
-- `mfa_code` (String) Muti-factor Authentication code for ViettelIdc API.
-- `password` (String) Password for ViettelIdc API.
+- `mfa_code` (String, Sensitive) Muti-factor Authentication code for ViettelIdc API.
+- `password` (String, Sensitive) Password for ViettelIdc API.
 - `username` (String) Username (IAM user) for VOKS resources. Requires domain_id. Env: VIETTELIDC_USERNAME.
 - `vpc_id` (String) Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.

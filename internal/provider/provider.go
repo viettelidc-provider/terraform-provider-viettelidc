@@ -87,10 +87,12 @@ func (p *viettelidcProvider) Schema(_ context.Context, _ provider.SchemaRequest,
 			"password": schema.StringAttribute{
 				Description: "Password for ViettelIdc API.",
 				Optional:    true,
+				Sensitive:   true,
 			},
 			"mfa_code": schema.StringAttribute{
 				Description: "Muti-factor Authentication code for ViettelIdc API.",
 				Optional:    true,
+				Sensitive:   true,
 			},
 			"vpc_id": schema.StringAttribute{
 				Description: "Default VPC ID for IaC resources. Env: VIETTELIDC_VPC_ID.",

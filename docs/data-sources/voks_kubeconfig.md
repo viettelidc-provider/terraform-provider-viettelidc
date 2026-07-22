@@ -27,4 +27,4 @@ data "viettelidc_voks_kubeconfig" "example" {
 
 ### Read-Only
 
-- `value` (String) The kubeconfig file is essential for configuring access to the cluster, providing connection details, authentication credentials, and other configurations.
+- `value` (String, Sensitive) The kubeconfig file is essential for configuring access to the cluster, providing connection details, authentication credentials, and other configurations.
