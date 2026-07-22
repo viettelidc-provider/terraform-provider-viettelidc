@@ -320,6 +320,7 @@ func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.
 		iacNetworking.NewSecurityGroupRulesDataSource,
 		iacNetworking.NewBackupVMsDataSource,
 		iacNetworking.NewBackupSchedulersDataSource,
+		iacNetworking.NewBackupVMRecordsDataSource,
 		iacNetworking.NewInstanceDataSource,
 		iacNetworking.NewVMTemplatesDataSource,
 		iacNetworking.NewVFirewallsDataSource,
