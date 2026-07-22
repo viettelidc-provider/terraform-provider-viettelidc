@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -208,35 +209,53 @@ func (r *AutoscaleGroupResource) ValidateConfig(ctx context.Context, req resourc
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	resp.Diagnostics.Append(validateAutoscaleGroupModes(cfg)...)
+}
 
-	missing := func(p string, v attr.Value, when string) {
-		if v.IsNull() {
-			resp.Diagnostics.AddAttributeError(path.Root(p), "Missing Required Attribute",
-				fmt.Sprintf("%s is required when %s.", p, when))
+// validateAutoscaleGroupModes reports the attributes the chosen mode needs but
+// the config left out. Terraform cannot express "required when", so the schema
+// marks them optional and the rule lives here.
+func validateAutoscaleGroupModes(cfg AutoscaleGroupResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	require := func(need map[string]attr.Value, when string) {
+		for _, p := range sortedKeys(need) {
+			if need[p].IsNull() {
+				diags.AddAttributeError(path.Root(p), "Missing Required Attribute",
+					fmt.Sprintf("%s is required when %s.", p, when))
+			}
 		}
 	}
 
 	if cfg.IsAutoscale.ValueBool() {
-		for p, v := range map[string]attr.Value{
+		require(map[string]attr.Value{
 			"min_size":            cfg.MinSize,
 			"max_size":            cfg.MaxSize,
 			"scale_out_threshold": cfg.ScaleOutThreshold,
 			"scale_in_threshold":  cfg.ScaleInThreshold,
-		} {
-			missing(p, v, "is_autoscale = true")
-		}
+		}, "is_autoscale = true")
 	}
 
 	if cfg.HasLoadBalancer.ValueBool() {
-		for p, v := range map[string]attr.Value{
+		require(map[string]attr.Value{
 			"loadbalancer_id":      cfg.LoadBalancerID,
 			"loadbalancer_pool_id": cfg.LoadBalancerPoolID,
 			"subnet_id":            cfg.SubnetID,
 			"port_number":          cfg.PortNumber,
-		} {
-			missing(p, v, "has_load_balancer = true")
-		}
+		}, "has_load_balancer = true")
 	}
+	return diags
+}
+
+// sortedKeys keeps the diagnostics in a stable order; map range is random and
+// a shuffling error list is miserable to read and to test.
+func sortedKeys(m map[string]attr.Value) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (r *AutoscaleGroupResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {

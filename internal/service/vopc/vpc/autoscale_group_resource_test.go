@@ -315,3 +315,81 @@ func TestBuildAutoscaleGroupCreateBody_AutoscaleModeOmitsLBFields(t *testing.T) 
 		}
 	}
 }
+
+// The two modes need different attributes and the schema cannot say so, so this
+// rule is the only thing standing between a half-filled config and an opaque
+// 500 from the API.
+func TestValidateAutoscaleGroupModes(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		cfg     AutoscaleGroupResourceModel
+		wantErr []string
+	}{
+		{
+			name: "autoscale missing every metric attribute",
+			cfg:  AutoscaleGroupResourceModel{IsAutoscale: types.BoolValue(true)},
+			wantErr: []string{
+				"max_size is required when is_autoscale = true.",
+				"min_size is required when is_autoscale = true.",
+				"scale_in_threshold is required when is_autoscale = true.",
+				"scale_out_threshold is required when is_autoscale = true.",
+			},
+		},
+		{
+			name: "autoscale complete",
+			cfg: AutoscaleGroupResourceModel{
+				IsAutoscale:       types.BoolValue(true),
+				MinSize:           types.Int64Value(1),
+				MaxSize:           types.Int64Value(3),
+				ScaleOutThreshold: types.Int64Value(60),
+				ScaleInThreshold:  types.Int64Value(50),
+			},
+		},
+		{
+			name: "load balancer missing pool",
+			cfg: AutoscaleGroupResourceModel{
+				HasLoadBalancer: types.BoolValue(true),
+				LoadBalancerID:  types.StringValue("929"),
+				SubnetID:        types.StringValue("9935"),
+				PortNumber:      types.Int64Value(1),
+			},
+			wantErr: []string{"loadbalancer_pool_id is required when has_load_balancer = true."},
+		},
+		{
+			name: "load balancer complete",
+			cfg: AutoscaleGroupResourceModel{
+				HasLoadBalancer:    types.BoolValue(true),
+				LoadBalancerID:     types.StringValue("929"),
+				LoadBalancerPoolID: types.StringValue("2024"),
+				SubnetID:           types.StringValue("9935"),
+				PortNumber:         types.Int64Value(1),
+			},
+		},
+		{
+			// Neither flag set: nothing is demanded, the API decides.
+			name: "no mode chosen",
+			cfg:  AutoscaleGroupResourceModel{},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diags := validateAutoscaleGroupModes(tc.cfg)
+			var got []string
+			for _, d := range diags.Errors() {
+				got = append(got, d.Detail())
+			}
+			if len(got) != len(tc.wantErr) {
+				t.Fatalf("got %v, want %v", got, tc.wantErr)
+			}
+			for i := range got {
+				if got[i] != tc.wantErr[i] {
+					t.Errorf("error %d: got %q, want %q", i, got[i], tc.wantErr[i])
+				}
+			}
+		})
+	}
+}
