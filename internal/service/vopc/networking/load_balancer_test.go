@@ -7,10 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
 
 // ---------- Helper: build a minimal LB detail response ----------
@@ -361,5 +365,35 @@ func TestLoadBalancerDataSource_ByName(t *testing.T) {
 	}
 	if foundID != 11 {
 		t.Errorf("expected id=11, got %d", foundID)
+	}
+}
+
+// The list endpoint carries ipAddress, provisioningStatus and
+// isPublicLoadbalancer; the data source used to drop all three, so looking a
+// load balancer up told you nothing about where to point traffic.
+func TestLoadBalancerDataSource_LookupByIPAddress(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
+			{"vttLoadBalancerId":928,"name":"other","ipAddress":"10.17.10.10"},
+			{"vttLoadBalancerId":929,"name":"dev","ipAddress":"10.17.10.157",
+			 "status":"success","operatingStatus":"online","provisioningStatus":"active",
+			 "isPublicLoadbalancer":false,"vttSubnetId":9935,
+			 "vttLoadbalancerTypeName":"NETWORK TCP-UDP","loadbalancerTypeName":"LB Compact"}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	d := &LoadBalancerDataSource{client: client.NewClient(srv.URL, "tok"), customerID: "238250", defaultVpcID: "39721"}
+	cfg := LoadBalancerDataSourceModel{IPAddress: types.StringValue("10.17.10.157")}
+	got, diags := d.lookup(context.Background(), &cfg)
+	if diags.HasError() {
+		t.Fatalf("lookup: %v", diags)
+	}
+	if got.ID.ValueString() != "929" || got.Name.ValueString() != "dev" {
+		t.Fatalf("matched the wrong load balancer: %s/%s", got.ID.ValueString(), got.Name.ValueString())
+	}
+	if got.ProvisioningStatus.ValueString() != "active" || got.IsPublicLoadBalancer.ValueBool() {
+		t.Errorf("new fields not populated: %+v", got)
 	}
 }

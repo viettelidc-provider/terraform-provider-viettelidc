@@ -39,8 +39,13 @@ type LoadBalancerDataSourceModel struct {
 	AdminStateUp     types.Bool   `tfsdk:"admin_state_up"`
 	Status           types.String `tfsdk:"status"`
 	OperatingStatus  types.String `tfsdk:"operating_status"`
-	Listeners        types.List   `tfsdk:"listeners"`
-	Pools            types.List   `tfsdk:"pools"`
+
+	IPAddress            types.String `tfsdk:"ip_address"`
+	ProvisioningStatus   types.String `tfsdk:"provisioning_status"`
+	IsPublicLoadBalancer types.Bool   `tfsdk:"is_public_loadbalancer"`
+
+	Listeners types.List `tfsdk:"listeners"`
+	Pools     types.List `tfsdk:"pools"`
 }
 
 func NewLoadBalancerDataSource() datasource.DataSource { return &LoadBalancerDataSource{} }
@@ -70,17 +75,17 @@ func (d *LoadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 	}
 
 	resp.Schema = schema.Schema{
-		Description: "Lookup a Load Balancer by ID or name in a VPC.",
+		Description: "Lookup a Load Balancer by ID, name or IP address in a VPC.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Load Balancer ID (vttLoadBalancerId). Either 'id' or 'name' must be specified.",
+				Description: "Load Balancer ID (vttLoadBalancerId). One of 'id', 'name' or 'ip_address' must be specified.",
 			},
 			"name": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Name of the Load Balancer to look up. Either 'id' or 'name' must be specified.",
+				Description: "Name of the Load Balancer to look up. One of 'id', 'name' or 'ip_address' must be specified.",
 			},
 			"vpc_id": schema.StringAttribute{
 				Optional:    true,
@@ -119,6 +124,19 @@ func (d *LoadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Computed:    true,
 				Description: "Operating status of the Load Balancer.",
 			},
+			"ip_address": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Private IP the Load Balancer listens on. Can also be used to look one up.",
+			},
+			"provisioning_status": schema.StringAttribute{
+				Computed:    true,
+				Description: "Provisioning status of the Load Balancer.",
+			},
+			"is_public_loadbalancer": schema.BoolAttribute{
+				Computed:    true,
+				Description: "Whether the Load Balancer is reachable from the internet.",
+			},
 			"listeners": schema.ListAttribute{
 				Computed:    true,
 				ElementType: types.ObjectType{AttrTypes: listenerAttrTypes},
@@ -154,17 +172,39 @@ func (d *LoadBalancerDataSource) Read(ctx context.Context, req datasource.ReadRe
 		return
 	}
 
+	result, diags := d.lookup(ctx, &config)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Fetch listeners and pools using helper methods
+	d.fetchListeners(ctx, result, &resp.Diagnostics)
+	d.fetchPools(ctx, result, &resp.Diagnostics)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
+}
+
+// lookup finds one load balancer by whichever selector the config set. Split
+// out of Read so the matching can be tested without a ReadRequest.
+func (d *LoadBalancerDataSource) lookup(ctx context.Context, config *LoadBalancerDataSourceModel) (*LoadBalancerDataSourceModel, diag.Diagnostics) {
+	var diags diag.Diagnostics
+
 	vpcID := defaultIfEmpty(config.VpcID, d.defaultVpcID)
 	if vpcID == "" {
-		resp.Diagnostics.AddError("Missing vpc_id", "Set 'vpc_id' or configure provider default.")
-		return
+		diags.AddError("Missing vpc_id", "Set 'vpc_id' or configure provider default.")
+		return nil, diags
 	}
 
-	if config.ID.IsNull() && config.Name.IsNull() {
-		resp.Diagnostics.AddError("Missing filter", "Either 'id' or 'name' must be specified.")
-		return
+	if config.ID.IsNull() && config.Name.IsNull() && config.IPAddress.IsNull() {
+		diags.AddError("Missing filter", "One of 'id', 'name' or 'ip_address' must be specified.")
+		return nil, diags
 	}
 
+	// ponytail: the endpoint also filters server-side, e.g.
+	// filters:[{"name":"LBTbl.name","values":["dev"]}] or {"name":"ip_address"}.
+	// One page of 1000 covers every VPC we have seen; switch to the server
+	// filter if one ever holds more.
 	body := map[string]interface{}{
 		"vpc_id":      vpcID,
 		"customer_id": d.customerID,
@@ -173,10 +213,10 @@ func (d *LoadBalancerDataSource) Read(ctx context.Context, req datasource.ReadRe
 		"filters":     []interface{}{},
 	}
 
-	apiResp, diags := callAPI(ctx, d.client, pathLoadBalancerList, body)
-	resp.Diagnostics.Append(diags...)
-	if resp.Diagnostics.HasError() {
-		return
+	apiResp, d2 := callAPI(ctx, d.client, pathLoadBalancerList, body)
+	diags.Append(d2...)
+	if diags.HasError() {
+		return nil, diags
 	}
 
 	type lbListItem struct {
@@ -189,14 +229,17 @@ func (d *LoadBalancerDataSource) Read(ctx context.Context, req datasource.ReadRe
 		AdminStateUp            bool   `json:"adminStateUp"`
 		Status                  string `json:"status"`
 		OperatingStatus         string `json:"operatingStatus"`
+		IPAddress               string `json:"ipAddress"`
+		ProvisioningStatus      string `json:"provisioningStatus"`
+		IsPublicLoadbalancer    bool   `json:"isPublicLoadbalancer"`
 	}
 	var listResp struct {
 		Items []lbListItem `json:"items"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
-		resp.Diagnostics.AddError("Parse Error", err.Error())
-		return
+		diags.AddError("Parse Error", err.Error())
+		return nil, diags
 	}
 
 	var found *lbListItem
@@ -210,32 +253,34 @@ func (d *LoadBalancerDataSource) Read(ctx context.Context, req datasource.ReadRe
 			found = item
 			break
 		}
+		if !config.IPAddress.IsNull() && item.IPAddress == config.IPAddress.ValueString() {
+			found = item
+			break
+		}
 	}
 
 	if found == nil {
-		resp.Diagnostics.AddError("Not Found", fmt.Sprintf("Load Balancer not found with id=%s name=%s", config.ID.ValueString(), config.Name.ValueString()))
-		return
+		diags.AddError("Not Found", fmt.Sprintf("Load Balancer not found with id=%s name=%s ip_address=%s",
+			config.ID.ValueString(), config.Name.ValueString(), config.IPAddress.ValueString()))
+		return nil, diags
 	}
 
-	result := LoadBalancerDataSourceModel{
-		ID:               types.StringValue(fmt.Sprintf("%d", found.VttLoadBalancerID)),
-		Name:             types.StringValue(found.Name),
-		Description:      types.StringValue(found.Description),
-		VpcID:            types.StringValue(vpcID),
-		SubnetID:         types.StringValue(fmt.Sprintf("%d", found.VttSubnetID)),
-		FloatingIPID:     types.StringValue(""),
-		LoadBalancerType: types.StringValue(found.VttLoadbalancerTypeName),
-		PackageType:      types.StringValue(found.LoadbalancerTypeName),
-		AdminStateUp:     types.BoolValue(found.AdminStateUp),
-		Status:           types.StringValue(found.Status),
-		OperatingStatus:  types.StringValue(found.OperatingStatus),
-	}
-
-	// Fetch listeners and pools using helper methods
-	d.fetchListeners(ctx, &result, &resp.Diagnostics)
-	d.fetchPools(ctx, &result, &resp.Diagnostics)
-
-	resp.Diagnostics.Append(resp.State.Set(ctx, result)...)
+	return &LoadBalancerDataSourceModel{
+		ID:                   types.StringValue(fmt.Sprintf("%d", found.VttLoadBalancerID)),
+		Name:                 types.StringValue(found.Name),
+		Description:          types.StringValue(found.Description),
+		VpcID:                types.StringValue(vpcID),
+		SubnetID:             types.StringValue(fmt.Sprintf("%d", found.VttSubnetID)),
+		FloatingIPID:         types.StringValue(""),
+		LoadBalancerType:     types.StringValue(found.VttLoadbalancerTypeName),
+		PackageType:          types.StringValue(found.LoadbalancerTypeName),
+		AdminStateUp:         types.BoolValue(found.AdminStateUp),
+		Status:               types.StringValue(found.Status),
+		IPAddress:            types.StringValue(found.IPAddress),
+		ProvisioningStatus:   types.StringValue(found.ProvisioningStatus),
+		IsPublicLoadBalancer: types.BoolValue(found.IsPublicLoadbalancer),
+		OperatingStatus:      types.StringValue(found.OperatingStatus),
+	}, diags
 }
 
 func (d *LoadBalancerDataSource) fetchListeners(ctx context.Context, model *LoadBalancerDataSourceModel, diags *diag.Diagnostics) {

@@ -2,12 +2,12 @@
 page_title: "viettelidc_ovpc_load_balancer Data Source - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  Lookup a Load Balancer by ID or name in a VPC.
+  Lookup a Load Balancer by ID, name or IP address in a VPC.
 ---
 
 # viettelidc_ovpc_load_balancer (Data Source)
 
-Lookup a Load Balancer by ID or name in a VPC.
+Lookup a Load Balancer by ID, name or IP address in a VPC.
 
 ## Example Usage
 
@@ -23,8 +23,9 @@ data "viettelidc_ovpc_load_balancer" "web" {
 
 ### Optional
 
-- `id` (String) Load Balancer ID (vttLoadBalancerId). Either 'id' or 'name' must be specified.
-- `name` (String) Name of the Load Balancer to look up. Either 'id' or 'name' must be specified.
+- `id` (String) Load Balancer ID (vttLoadBalancerId). One of 'id', 'name' or 'ip_address' must be specified.
+- `ip_address` (String) Private IP the Load Balancer listens on. Can also be used to look one up.
+- `name` (String) Name of the Load Balancer to look up. One of 'id', 'name' or 'ip_address' must be specified.
 - `vpc_id` (String) VPC ID to search within. Uses provider default if not specified.
 
 ### Read-Only
@@ -32,11 +33,13 @@ data "viettelidc_ovpc_load_balancer" "web" {
 - `admin_state_up` (Boolean) Administrative state of the Load Balancer.
 - `description` (String) Description of the Load Balancer.
 - `floating_ip_id` (String) ID of the floating IP assigned to the Load Balancer.
+- `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
 - `loadbalancer_type` (String) Type of the Load Balancer.
 - `operating_status` (String) Operating status of the Load Balancer.
 - `package_type` (String) Package type of the Load Balancer.
 - `pools` (List of Object) List of pools associated with the Load Balancer. (see [below for nested schema](#nestedatt--pools))
+- `provisioning_status` (String) Provisioning status of the Load Balancer.
 - `status` (String) Current status of the Load Balancer.
 - `subnet_id` (String) ID of the subnet where the Load Balancer is placed.
 
