@@ -1,6 +1,9 @@
-# VM-level backup schedule.
-# vm_ids are the backup service's VM UUIDs, which are not the numeric instance
-# ids: list them with GET /backup/api/v1/vpc/{vpc_id}/vms/all.
+# The backup service identifies VMs by its own UUIDs, not by the numeric
+# instance id. Look them up instead of hardcoding.
+data "viettelidc_ovpc_backup_vms" "available" {
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
+}
+
 resource "viettelidc_ovpc_backup_scheduler" "daily" {
   name             = "daily-vm-backup"
   description      = "Every day at 04:00"
@@ -9,11 +12,13 @@ resource "viettelidc_ovpc_backup_scheduler" "daily" {
   start_time       = "04:00:00"
   number_of_record = 7
 
+  # Pick by VM name; adding or removing entries updates the schedule in place.
   vm_ids = [
-    "78ec434d-8cc0-45c8-9bb6-8c3435a7f567",
+    for vm in data.viettelidc_ovpc_backup_vms.available.vms :
+    vm.id if vm.name == "my-app-server"
   ]
 
-  # Destroying the schedule keeps the backup records unless this is true.
+  # Destroying the schedule keeps its backup records unless this is true.
   delete_records_on_destroy = false
 
   vpc_id = data.viettelidc_ovpc_vpc.main.id
