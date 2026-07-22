@@ -262,7 +262,7 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			"pool_algorithm": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "How traffic is spread across members. Defaults to ROUND_ROBIN.",
+				Description: "How traffic is spread across members: ROUND_ROBIN, LEAST_CONNECTIONS or SOURCE_IP. Defaults to ROUND_ROBIN.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("ROUND_ROBIN", "LEAST_CONNECTIONS", "SOURCE_IP"),
 				},
@@ -274,7 +274,7 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			"pool_session_persistence": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Pin a client to one member. NONE or SOURCE_IP. Defaults to NONE.",
+				Description: "Pin a client to one member: NONE or SOURCE_IP. Defaults to NONE.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("NONE", "SOURCE_IP"),
 				},
@@ -295,7 +295,7 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			"monitor_type": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "Health check type. Must suit listener_protocol: UDP-CONNECT or PING for a UDP listener, TCP/PING/TLS-HELLO for TCP, and HTTP or HTTPS only for an HTTP-family listener. Defaults to the check that matches listener_protocol.",
+				Description: "Health check type: HTTP, HTTPS, PING, TCP, TLS-HELLO or UDP-CONNECT. Not every check works with every listener_protocol — the API answers LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL for pairs it rejects, and which pairs those are is not documented. Defaults to a check derived from listener_protocol.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("HTTP", "HTTPS", "PING", "TCP", "TLS-HELLO", "UDP-CONNECT"),
 				},
@@ -355,7 +355,7 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			"monitor_http_method": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "HTTP method the check sends. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.",
+				Description: "HTTP method the check sends: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH, TRACE or CONNECT. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT"),
 				},

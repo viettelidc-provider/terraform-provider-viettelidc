@@ -79,17 +79,17 @@ resource "viettelidc_ovpc_load_balancer" "tcp" {
 - `listener_protocol` (String) Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer, HTTP or HTTPS for an APPLICATION HTTP-HTTPS one. Defaults to HTTP.
 - `monitor_delay` (Number) Seconds between checks. Defaults to 5.
 - `monitor_expected_code` (Number) Status code that counts as healthy. Only used when monitor_type is HTTP or HTTPS. Defaults to 200.
-- `monitor_http_method` (String) HTTP method the check sends. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.
+- `monitor_http_method` (String) HTTP method the check sends: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH, TRACE or CONNECT. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.
 - `monitor_max_retries` (Number) Successful checks before a member is put back in rotation. Defaults to 3.
 - `monitor_max_retries_down` (Number) Failed checks before a member is taken out of rotation. Defaults to 3.
 - `monitor_name` (String) Name of the health monitor. Defaults to <name>-health.
 - `monitor_timeout` (Number) Seconds before a check times out. Defaults to 5.
-- `monitor_type` (String) Health check type. Must suit listener_protocol: UDP-CONNECT or PING for a UDP listener, TCP/PING/TLS-HELLO for TCP, and HTTP or HTTPS only for an HTTP-family listener. Defaults to the check that matches listener_protocol.
+- `monitor_type` (String) Health check type: HTTP, HTTPS, PING, TCP, TLS-HELLO or UDP-CONNECT. Not every check works with every listener_protocol — the API answers LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL for pairs it rejects, and which pairs those are is not documented. Defaults to a check derived from listener_protocol.
 - `monitor_url_path` (String) Path the check requests. Only used when monitor_type is HTTP or HTTPS. Defaults to /.
-- `pool_algorithm` (String) How traffic is spread across members. Defaults to ROUND_ROBIN.
+- `pool_algorithm` (String) How traffic is spread across members: ROUND_ROBIN, LEAST_CONNECTIONS or SOURCE_IP. Defaults to ROUND_ROBIN.
 - `pool_members` (Attributes List) Backend VMs to add as pool members at creation time. Changing this requires replacement. (see [below for nested schema](#nestedatt--pool_members))
 - `pool_name` (String) Name of the pool created with the Load Balancer. Defaults to <name>-pool.
-- `pool_session_persistence` (String) Pin a client to one member. NONE or SOURCE_IP. Defaults to NONE.
+- `pool_session_persistence` (String) Pin a client to one member: NONE or SOURCE_IP. Defaults to NONE.
 - `vpc_id` (String) VPC ID. Uses provider default if not specified.
 
 ### Read-Only
