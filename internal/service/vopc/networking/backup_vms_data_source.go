@@ -40,6 +40,12 @@ type BackupVMsDataSourceModel struct {
 	VMs    []BackupVMItem `tfsdk:"vms"`
 }
 
+// backupVMEntry is one element of either envelope the VM list endpoints use.
+type backupVMEntry struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 type BackupVMItem struct {
 	ID   types.String `tfsdk:"id"`
 	Name types.String `tfsdk:"name"`
@@ -115,21 +121,25 @@ func (d *BackupVMsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		resp.Diagnostics.AddError("Cannot list VMs available for backup", err.Error())
 		return
 	}
+	// /vms answers with "items" but /vms/all and /vms/unassigned answer with
+	// "data". Accept either rather than silently returning nothing.
 	var env struct {
-		Items []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"items"`
+		Items []backupVMEntry `json:"items"`
+		Data  []backupVMEntry `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
 		resp.Diagnostics.AddError("decode backup VM list", err.Error())
 		return
 	}
+	entries := env.Items
+	if len(entries) == 0 {
+		entries = env.Data
+	}
 
 	cfg.VpcID = types.StringValue(vpcID)
 	cfg.Filter = types.StringValue(filter)
-	cfg.VMs = make([]BackupVMItem, 0, len(env.Items))
-	for _, it := range env.Items {
+	cfg.VMs = make([]BackupVMItem, 0, len(entries))
+	for _, it := range entries {
 		cfg.VMs = append(cfg.VMs, BackupVMItem{
 			ID:   types.StringValue(it.ID),
 			Name: types.StringValue(it.Name),
