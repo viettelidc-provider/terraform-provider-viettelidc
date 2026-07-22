@@ -166,7 +166,7 @@ func (r *NatGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	plan.VpcID = types.StringValue(vpcID)
 
 	// Poll until the NAT Gateway reaches a terminal ready state and report to user.
-	if err := r.pollReady(ctx, &plan, 5*time.Minute); err != nil {
+	if err := r.pollReady(ctx, &plan, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("NAT Gateway did not become ready", err.Error())
 		return
 	}

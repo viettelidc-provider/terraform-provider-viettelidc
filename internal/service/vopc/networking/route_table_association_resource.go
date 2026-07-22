@@ -253,7 +253,7 @@ func pollSubnetAssociation(ctx context.Context, client *client.Client, routeTabl
 		"customerId":      custIDInt,
 	}
 
-	timeout := time.After(2 * time.Minute)
+	timeout := time.After(asyncOpTimeout)
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 

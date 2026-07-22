@@ -517,7 +517,10 @@ func (r *LoadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 		"vttLoadBalancerId": parseInt(state.ID.ValueString()),
 	}
 
-	apiResp, diags := callAPI(ctx, r.client, pathLoadBalancerDelete, body)
+	// The pool can still be settling from create/update, which CSA reports as
+	// ERROR_POOL_IS_IN_OTHER_PROCESSING. Wait it out rather than failing the
+	// destroy and leaving the LB behind.
+	apiResp, diags := callAPIRetryBusy(ctx, r.client, pathLoadBalancerDelete, body, asyncOpTimeout)
 	if diags.HasError() {
 		if apiResp != nil && isNotFoundMessage(apiResp.Message) {
 			return
@@ -532,7 +535,7 @@ func (r *LoadBalancerResource) Delete(ctx context.Context, req resource.DeleteRe
 		"customer_id":       r.customerID,
 		"vttLoadBalancerId": parseInt(state.ID.ValueString()),
 	}
-	if err := pollUntilGone(ctx, r.client, pathLoadBalancerDetail, pollBody, 10*time.Minute); err != nil {
+	if err := pollUntilGone(ctx, r.client, pathLoadBalancerDetail, pollBody, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("Load Balancer did not disappear after delete", err.Error())
 	}
 }

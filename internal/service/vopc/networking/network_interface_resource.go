@@ -260,14 +260,53 @@ func (r *NetworkInterfaceResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
-	// Poll until NIC is fully gone from the API (delete is async).
-	pollBody := map[string]interface{}{
-		"network_interface_id": state.ID.ValueString(),
-		"vpc_id":               state.VpcID.ValueString(),
-		"customer_id":          r.customerID,
-	}
-	if err := pollUntilGone(ctx, r.client, pathNicDetail, pollBody, 2*time.Minute); err != nil {
+	// Poll until the NIC is fully gone (delete is async). This has to use
+	// list+filter for the same reason readInto does: nic/detail answers with a
+	// stub for a NIC that no longer exists, so pollUntilGone against it never
+	// sees "gone" and burns the whole timeout on an already-deleted NIC.
+	if err := r.pollNicGone(ctx, state.VpcID.ValueString(), state.ID.ValueString(), asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("NIC did not disappear after delete", err.Error())
+	}
+}
+
+// pollNicGone waits until id is absent from nic/private/list.
+func (r *NetworkInterfaceResource) pollNicGone(ctx context.Context, vpcID, id string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		body := map[string]interface{}{
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+			"pageIndex":   0,
+			"pageSize":    1000,
+		}
+		apiResp, diags := callAPI(ctx, r.client, pathNicList, body)
+		if diags.HasError() {
+			// The list itself failing means we cannot say the NIC is still
+			// there; treat it like the old code did and stop waiting.
+			return nil
+		}
+		items, err := decodeSubnetList(apiResp)
+		if err != nil {
+			return fmt.Errorf("NIC list decode failed: %w", err)
+		}
+		present := false
+		for _, raw := range items {
+			if asIDString(raw, "id") == id {
+				present = true
+				break
+			}
+		}
+		if !present {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for NIC %s to disappear (timeout=%s)", id, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 

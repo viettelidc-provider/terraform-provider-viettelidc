@@ -166,7 +166,7 @@ func (r *FloatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 
 	// Wait until the FIP has been assigned a public IP (AVAILABLE) before associating.
 	// The backend assigns the IP asynchronously after allocation.
-	allocDeadline := time.Now().Add(2 * time.Minute)
+	allocDeadline := time.Now().Add(asyncOpTimeout)
 	for {
 		var pollDiags diag.Diagnostics
 		r.readInto(ctx, &plan, &pollDiags)

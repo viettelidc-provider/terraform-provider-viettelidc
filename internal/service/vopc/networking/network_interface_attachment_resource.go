@@ -124,7 +124,7 @@ func (r *NetworkInterfaceAttachmentResource) Create(ctx context.Context, req res
 	// so the poll never succeeded and every attach reported a false timeout while
 	// the NIC was in fact attached.
 	nicID := plan.NetworkInterfaceID.ValueString()
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(asyncOpTimeout)
 	for {
 		raw, err := findNicInList(ctx, r.client, r.customerID, vpcID, nicID)
 		if err != nil {
