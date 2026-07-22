@@ -316,6 +316,8 @@ func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.
 		iacNetworking.NewNetworkInterfacesDataSource,
 		iacNetworking.NewRouteTableDataSource,
 		iacNetworking.NewInternetGatewayDataSource,
+		iacNetworking.NewInternetGatewaysDataSource,
+		iacNetworking.NewSecurityGroupRulesDataSource,
 		iacNetworking.NewInstanceDataSource,
 		iacNetworking.NewVMTemplatesDataSource,
 		iacNetworking.NewVFirewallsDataSource,
@@ -378,7 +380,6 @@ func (p *viettelidcProvider) Resources(_ context.Context) []func() resource.Reso
 		voksResource.NewAddonResource,
 		// IaC networking
 		iacNetworking.NewSubnetResource,
-		iacNetworking.NewVPCResource,
 		iacNetworking.NewFloatingIPResource,
 		iacNetworking.NewLoadBalancerResource,
 		iacNetworking.NewNatGatewayResource,

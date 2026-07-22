@@ -502,64 +502,6 @@ func TestBackupPlanReadAndMerge_NotFound(t *testing.T) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// VPCResource.readInto — basic smoke test for VPC detail read
-// ─────────────────────────────────────────────────────────────────────────────
-
-func TestVPCResource_ReadInto_Success(t *testing.T) {
-	t.Parallel()
-	srv := newFakeAPI(t)
-	srv.on(pathVPCDetail, func(_ map[string]interface{}) (interface{}, string, interface{}) {
-		return float64(0), "ok", map[string]interface{}{
-			"id":          "vpc-1",
-			"name":        "my-vpc",
-			"cidrBlock":   "10.0.0.0/16",
-			"description": "test vpc",
-			"status":      "ACTIVE",
-		}
-	})
-
-	r := &VPCResource{client: srv.newClient(), customerID: "cust"}
-	m := &VPCResourceModel{
-		ID: types.StringValue("vpc-1"),
-	}
-
-	var dgs diag.Diagnostics
-	r.readInto(context.Background(), m, &dgs)
-	if dgs.HasError() {
-		t.Fatalf("unexpected error diag: %v", dgs)
-	}
-	if m.Name.ValueString() != "my-vpc" {
-		t.Errorf("expected name 'my-vpc', got %q", m.Name.ValueString())
-	}
-	if m.CidrBlock.ValueString() != "10.0.0.0/16" {
-		t.Errorf("expected cidr '10.0.0.0/16', got %q", m.CidrBlock.ValueString())
-	}
-}
-
-func TestVPCResource_ReadInto_NotFound(t *testing.T) {
-	t.Parallel()
-	srv := newFakeAPI(t)
-	srv.on(pathVPCDetail, func(_ map[string]interface{}) (interface{}, string, interface{}) {
-		return "FAILURE", "VPC not found", nil
-	})
-
-	r := &VPCResource{client: srv.newClient(), customerID: "cust"}
-	m := &VPCResourceModel{ID: types.StringValue("vpc-missing")}
-
-	var dgs diag.Diagnostics
-	found := r.readInto(context.Background(), m, &dgs)
-	if found {
-		t.Fatal("expected readInto to return false (drift) on not-found")
-	}
-	if dgs.HasError() {
-		t.Fatalf("drift (not-found) should not produce error diag, got: %v", dgs)
-	}
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NatGatewayResource.readAndMerge — basic list-parse smoke test
-// ─────────────────────────────────────────────────────────────────────────────
-
 func TestNatGatewayReadAndMerge_Success(t *testing.T) {
 	t.Parallel()
 	srv := newFakeAPI(t)

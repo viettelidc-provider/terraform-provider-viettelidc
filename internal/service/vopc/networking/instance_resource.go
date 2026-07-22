@@ -56,6 +56,7 @@ type InstanceResourceModel struct {
 	StorageType      types.String `tfsdk:"storage_type"`
 	Storage          types.Int64  `tfsdk:"storage"`
 	KeyPairName      types.String `tfsdk:"key_pair_name"`
+	KeyPairID        types.String `tfsdk:"key_pair_id"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
 	SecurityGroupIDs types.List   `tfsdk:"security_group_ids"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
@@ -75,7 +76,11 @@ func (r *InstanceResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "ViettelIDC Compute Instance (VM).",
+		Description: "ViettelIDC Compute Instance (VM). " +
+			"NOTE: starting and stopping a VM is not exposed as a Terraform attribute. " +
+			"The API has a stop endpoint (used internally when a resize or a delete needs the VM powered off) " +
+			"but no start endpoint is routed on the gateway, so a power_state attribute could only ever turn a VM off, " +
+			"never back on. Use the portal to power VMs on and off until a start endpoint exists.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -214,6 +219,14 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"key_pair_name": schema.StringAttribute{
 				Optional:    true,
 				Description: "Key pair name to inject into the instance.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"key_pair_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "Key pair ID to inject into the instance.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
@@ -364,6 +377,17 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 			"customer_id": r.customerID,
 		}
 		if _, diags := callAPI(ctx, r.client, pathVMUpdate, updateBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+
+		// Explicitly start the VM after resize so it can become POWERED_ON
+		startBody := map[string]interface{}{
+			"instance_id": vmIDInt,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMStart, startBody); diags.HasError() {
 			resp.Diagnostics.Append(diags...)
 			return
 		}
@@ -559,7 +583,14 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 		"storageType": storageType,
 	}
 	if v := m.KeyPairName.ValueString(); v != "" {
-		body["key_pair_name"] = v
+		kp := map[string]interface{}{
+			"keypairName": v,
+		}
+		if kpID := m.KeyPairID.ValueString(); kpID != "" {
+			kpIDInt, _ := strconv.ParseInt(kpID, 10, 64)
+			kp["id"] = kpIDInt
+		}
+		body["keyPair"] = kp
 	}
 	if !m.InstanceTypeID.IsNull() && !m.InstanceTypeID.IsUnknown() && m.InstanceTypeID.ValueInt64() > 0 {
 		instanceType["id"] = m.InstanceTypeID.ValueInt64()

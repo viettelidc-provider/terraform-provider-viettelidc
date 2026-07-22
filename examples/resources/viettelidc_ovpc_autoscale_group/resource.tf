@@ -9,5 +9,5 @@ resource "viettelidc_ovpc_autoscale_group" "web" {
   scale_out_threshold = 80
   scale_in_threshold  = 20
   has_load_balancer   = false
-  vpc_id              = viettelidc_ovpc_vpc.main.id
+  vpc_id              = data.viettelidc_ovpc_vpc.main.id
 }

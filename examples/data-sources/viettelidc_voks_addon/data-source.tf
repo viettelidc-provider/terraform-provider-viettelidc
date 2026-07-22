@@ -1,10 +1,14 @@
 # Example Usage
 data "viettelidc_voks_addon" "addon" {
-
   cluster_id = "1234"
   name       = "coredns"
+}
 
-  #Attribute Reference
-  addon_version = "v1.10.1-eksbuild.1"
-  status        = "SUCCESS"
+# Attribute Reference - these are read-only; do not set them in the block above.
+output "addon_version" {
+  value = data.viettelidc_voks_addon.addon.version
+}
+
+output "addon_status" {
+  value = data.viettelidc_voks_addon.addon.status
 }

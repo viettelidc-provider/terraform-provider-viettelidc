@@ -5,18 +5,20 @@ resource "viettelidc_ovpc_load_balancer" "web" {
   floating_ip_id    = viettelidc_ovpc_floating_ip.fip.id
   loadbalancer_type = "APPLICATION HTTP-HTTPS"
   package_type      = "LB Compact"
-  vpc_id            = viettelidc_ovpc_vpc.main.id
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
   admin_state_up    = true
 
-  pool_members {
-    vm_id  = viettelidc_ovpc_instance.vm1.id
-    port   = 80
-    weight = 1
-  }
-
-  pool_members {
-    vm_id  = viettelidc_ovpc_instance.vm2.id
-    port   = 80
-    weight = 1
-  }
+  # pool_members is an attribute list, not a block - note the `=` and the brackets.
+  pool_members = [
+    {
+      vm_id  = viettelidc_ovpc_instance.vm1.id
+      port   = 80
+      weight = 1
+    },
+    {
+      vm_id  = viettelidc_ovpc_instance.vm2.id
+      port   = 80
+      weight = 1
+    },
+  ]
 }

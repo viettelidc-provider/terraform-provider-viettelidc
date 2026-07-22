@@ -14,7 +14,7 @@ Look up an existing ViettelIDC TLS/SSL Certificate by ID or name.
 ```terraform
 data "viettelidc_ovpc_certificate" "tls" {
   name   = "my-tls-cert"
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 

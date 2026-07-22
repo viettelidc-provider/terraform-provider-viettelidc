@@ -337,6 +337,12 @@ func deriveProtocolName(ruleType string) string {
 			return proto
 		}
 	}
+	switch upper {
+	case "SSH", "HTTP", "HTTPS", "IMAP":
+		return "TCP"
+	case "DNS":
+		return "UDP"
+	}
 	return ""
 }
 

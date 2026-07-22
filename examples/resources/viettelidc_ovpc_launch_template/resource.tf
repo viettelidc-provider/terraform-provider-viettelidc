@@ -4,5 +4,5 @@ resource "viettelidc_ovpc_launch_template" "web" {
   vm_id       = viettelidc_ovpc_instance.base_vm.id
   memory_size = 4
   cpu_size    = 2
-  vpc_id      = viettelidc_ovpc_vpc.main.id
+  vpc_id      = data.viettelidc_ovpc_vpc.main.id
 }

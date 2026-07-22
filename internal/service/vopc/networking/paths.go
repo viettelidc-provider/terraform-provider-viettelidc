@@ -67,6 +67,7 @@ const (
 	pathVMDetail = "/csa/api/v1/vm/detail"
 	pathVMList   = "/csa/api/v1/vpc/vm/list"
 	pathVMStop   = "/csa/api/v1/vm/stop"
+	pathVMStart  = "/csa/api/v1/vm/start"
 	pathVMUpdate = "/csa/api/v1/vm/update"
 	pathVMDelete = "/csa/api/v1/vm/delete"
 
@@ -85,6 +86,7 @@ const (
 	pathRouteTableList         = "/csa/api/v1/networking/route-table/list"
 	pathRouteTableSubnetAttach = "/csa/api/v1/networking/route-table/subnet/attach"
 	pathRouteTableSubnetDetach = "/csa/api/v1/networking/route-table/subnet/detach"
+	pathRouteTableSubnetList   = "/csa/api/v1/networking/route-table/association/subnet/list"
 	pathRouteTableAssociation  = "/csa/api/v1/networking/route-table/association/subnet/all"
 	pathRouteTableAvailable    = "/csa/api/v1/networking/route-table/available/subnet/all"
 
