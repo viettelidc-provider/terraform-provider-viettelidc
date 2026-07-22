@@ -241,7 +241,7 @@ func TestUnit_AutoscaleGroupResource_DefaultMetricType(t *testing.T) {
 	plan := AutoscaleGroupResourceModel{
 		Name:              types.StringValue("asg"),
 		LaunchTemplateID:  types.StringValue("lt-1"),
-		IsAutoscale:       types.BoolValue(false),
+		IsAutoscale:       types.BoolValue(true), // metric_type only ships in autoscale mode
 		DesiredCapacity:   types.Int64Value(1),
 		MinSize:           types.Int64Value(1),
 		MaxSize:           types.Int64Value(3),
@@ -253,5 +253,65 @@ func TestUnit_AutoscaleGroupResource_DefaultMetricType(t *testing.T) {
 	body := buildAutoscaleGroupCreateBody(plan, "c", "v")
 	if body["metric_type"] != "CPU" {
 		t.Errorf("expected default metric_type CPU, got %v", body["metric_type"])
+	}
+}
+
+// Load-balancer mode sends a different set of fields than autoscale mode, and
+// the four LB fields go out camelCased because kong.yaml has no rename for them
+// yet. Both halves of that are easy to break by accident.
+func TestBuildAutoscaleGroupCreateBody_LoadBalancerMode(t *testing.T) {
+	t.Parallel()
+	plan := AutoscaleGroupResourceModel{
+		Name:               types.StringValue("dev2"),
+		LaunchTemplateID:   types.StringValue("211"),
+		IsAutoscale:        types.BoolValue(false),
+		DesiredCapacity:    types.Int64Value(1),
+		HasLoadBalancer:    types.BoolValue(true),
+		LoadBalancerID:     types.StringValue("929"),
+		LoadBalancerPoolID: types.StringValue("2024"),
+		SubnetID:           types.StringValue("9935"),
+		PortNumber:         types.Int64Value(1),
+	}
+	body := buildAutoscaleGroupCreateBody(plan, "238250", "39721")
+
+	for _, k := range []string{"min_size", "max_size", "scale_out_threshold", "scale_in_threshold", "metric_type"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("%s must not be sent when is_autoscale is false", k)
+		}
+	}
+	if body["loadbalancerId"] != "929" || body["loadbalancerPoolId"] != "2024" {
+		t.Errorf("load balancer ids missing or renamed: %v", body)
+	}
+	if body["subnetId"] != int64(9935) {
+		t.Errorf("subnetId must be an integer, got %#v", body["subnetId"])
+	}
+	if body["portNumber"] != int64(1) {
+		t.Errorf("portNumber missing, got %#v", body["portNumber"])
+	}
+}
+
+// Autoscale mode keeps the metric fields and sends none of the LB ones.
+func TestBuildAutoscaleGroupCreateBody_AutoscaleModeOmitsLBFields(t *testing.T) {
+	t.Parallel()
+	plan := AutoscaleGroupResourceModel{
+		Name:              types.StringValue("dev"),
+		LaunchTemplateID:  types.StringValue("211"),
+		IsAutoscale:       types.BoolValue(true),
+		DesiredCapacity:   types.Int64Value(2),
+		MinSize:           types.Int64Value(1),
+		MaxSize:           types.Int64Value(3),
+		ScaleOutThreshold: types.Int64Value(60),
+		ScaleInThreshold:  types.Int64Value(50),
+		HasLoadBalancer:   types.BoolValue(false),
+	}
+	body := buildAutoscaleGroupCreateBody(plan, "238250", "39721")
+
+	if body["min_size"] != int64(1) || body["max_size"] != int64(3) || body["metric_type"] != "CPU" {
+		t.Errorf("autoscale fields missing: %v", body)
+	}
+	for _, k := range []string{"loadbalancerId", "loadbalancerPoolId", "subnetId", "portNumber"} {
+		if _, ok := body[k]; ok {
+			t.Errorf("%s must not be sent when it is not configured", k)
+		}
 	}
 }
