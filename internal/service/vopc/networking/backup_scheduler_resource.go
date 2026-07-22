@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -20,6 +21,16 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
+)
+
+// Status vocabulary of the backup service, taken from live traffic.
+// The schedule sits in CREATING or UPDATING while work is in flight; a VM being
+// removed reports REMOVING_VM until it is gone. No failure state has been
+// observed, so none is hard-coded.
+const (
+	scheduleStatusSuccess  = "SUCCESS"
+	vmStatusRemoving       = "REMOVING_VM"
+	backupSchedulerTimeout = 10 * time.Minute
 )
 
 var (
@@ -200,6 +211,14 @@ func (r *BackupSchedulerResource) Create(ctx context.Context, req resource.Creat
 
 	plan.ID = types.StringValue(id)
 	plan.VpcID = types.StringValue(vpcID)
+
+	// Create is asynchronous: the schedule comes back as CREATING. Returning here
+	// would store a transient status and let dependent resources run too early.
+	if err := r.waitForSchedule(ctx, vpcID, id); err != nil {
+		resp.Diagnostics.AddError("Backup schedule did not become ready", err.Error())
+		return
+	}
+
 	if !r.readInto(ctx, &plan, &resp.Diagnostics) {
 		resp.Diagnostics.AddError("Backup scheduler vanished", "created, but could not be read back")
 		return
@@ -257,6 +276,10 @@ func (r *BackupSchedulerResource) Update(ctx context.Context, req resource.Updat
 		resp.Diagnostics.AddError("Backup scheduler update failed", err.Error())
 		return
 	}
+	if err := r.waitForSchedule(ctx, vpcID, id); err != nil {
+		resp.Diagnostics.AddError("Backup schedule did not settle after update", err.Error())
+		return
+	}
 
 	var want, have []string
 	resp.Diagnostics.Append(plan.VMIDs.ElementsAs(ctx, &want, false)...)
@@ -266,15 +289,25 @@ func (r *BackupSchedulerResource) Update(ctx context.Context, req resource.Updat
 	}
 	added, removed := diffStrings(have, want)
 
+	// Each membership change also drives the schedule through UPDATING, so wait
+	// it out before the next call and before reading state back.
 	if len(added) > 0 {
 		if err := r.changeVMs(ctx, http.MethodPost, vpcID, id, added); err != nil {
 			resp.Diagnostics.AddError("Cannot add VMs to backup scheduler", err.Error())
+			return
+		}
+		if err := r.waitForSchedule(ctx, vpcID, id); err != nil {
+			resp.Diagnostics.AddError("Backup schedule did not settle after adding VMs", err.Error())
 			return
 		}
 	}
 	if len(removed) > 0 {
 		if err := r.changeVMs(ctx, http.MethodDelete, vpcID, id, removed); err != nil {
 			resp.Diagnostics.AddError("Cannot remove VMs from backup scheduler", err.Error())
+			return
+		}
+		if err := r.waitForSchedule(ctx, vpcID, id); err != nil {
+			resp.Diagnostics.AddError("Backup schedule did not settle after removing VMs", err.Error())
 			return
 		}
 	}
@@ -397,6 +430,10 @@ func (r *BackupSchedulerResource) readInto(ctx context.Context, m *BackupSchedul
 	return true
 }
 
+// readVMIDs returns the VMs that are actually members of the schedule. A VM
+// being removed stays in this list with status REMOVING_VM until the backend
+// finishes; counting it as a member would make the apply that removed it report
+// the VM as still present.
 func (r *BackupSchedulerResource) readVMIDs(ctx context.Context, vpcID, id string) ([]string, error) {
 	raw, err := r.client.DoMethod(ctx, http.MethodGet, backupScheduleVMsPath(vpcID, id), nil)
 	if err != nil {
@@ -404,7 +441,8 @@ func (r *BackupSchedulerResource) readVMIDs(ctx context.Context, vpcID, id strin
 	}
 	var env struct {
 		Data []struct {
-			VMID string `json:"vmId"`
+			VMID   string `json:"vmId"`
+			Status string `json:"status"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil {
@@ -412,9 +450,50 @@ func (r *BackupSchedulerResource) readVMIDs(ctx context.Context, vpcID, id strin
 	}
 	out := make([]string, 0, len(env.Data))
 	for _, v := range env.Data {
+		if strings.EqualFold(v.Status, vmStatusRemoving) {
+			continue
+		}
 		out = append(out, v.VMID)
 	}
 	return out, nil
+}
+
+// waitForSchedule blocks until the schedule leaves its transient state.
+// Observed states: CREATING and UPDATING while work is in flight, SUCCESS when
+// done — and adding or removing a VM also puts the schedule into UPDATING, so
+// this one wait covers create, update and membership changes alike.
+//
+// No failure state has ever been observed, so anything unrecognised is treated
+// as still-working and hits the timeout rather than being guessed at.
+func (r *BackupSchedulerResource) waitForSchedule(ctx context.Context, vpcID, id string) error {
+	deadline := time.Now().Add(backupSchedulerTimeout)
+	var last string
+	for {
+		raw, err := r.client.DoMethod(ctx, http.MethodGet, backupSchedulePath(vpcID, id), nil)
+		if err != nil {
+			return err
+		}
+		var env struct {
+			Data struct {
+				Status string `json:"status"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal(raw, &env); err != nil {
+			return err
+		}
+		last = env.Data.Status
+		if strings.EqualFold(last, scheduleStatusSuccess) {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("backup schedule %s still reports status %q after %s", id, last, backupSchedulerTimeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(3 * time.Second):
+		}
+	}
 }
 
 // ---------- Pure helpers ----------

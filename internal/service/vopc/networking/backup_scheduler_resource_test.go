@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -178,5 +179,63 @@ func TestExtractBackupSchedulerID(t *testing.T) {
 	}
 	if _, err := extractBackupSchedulerID([]byte(`{"code":"1"}`)); err == nil {
 		t.Error("expected an error when the response carries no id")
+	}
+}
+
+// A VM in REMOVING_VM is on its way out, not a member. Counting it would make
+// the very apply that removed it report the VM as still present.
+func TestBackupSchedulerReadVMIDs_SkipsRemoving(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"1","data":[
+			{"vmId":"staying","status":"SUCCESS"},
+			{"vmId":"leaving","status":"REMOVING_VM"}]}`))
+	}))
+	defer srv.Close()
+
+	r := &BackupSchedulerResource{client: client.NewClient(srv.URL, "tok"), customerID: "1", defaultVpcID: "39721"}
+	got, err := r.readVMIDs(context.Background(), "39721", "sched-1")
+	if err != nil {
+		t.Fatalf("readVMIDs: %v", err)
+	}
+	if strings.Join(got, ",") != "staying" {
+		t.Errorf("vm_ids = %v, want [staying]", got)
+	}
+}
+
+// Create and update are asynchronous; the wait must not return while the
+// schedule is still CREATING or UPDATING.
+func TestWaitForSchedule_WaitsOutTransientStates(t *testing.T) {
+	var calls int
+	states := []string{"CREATING", "UPDATING", "SUCCESS"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		s := states[calls]
+		if calls < len(states)-1 {
+			calls++
+		}
+		_, _ = w.Write([]byte(`{"code":"1","data":{"status":"` + s + `"}}`))
+	}))
+	defer srv.Close()
+
+	r := &BackupSchedulerResource{client: client.NewClient(srv.URL, "tok"), customerID: "1", defaultVpcID: "39721"}
+	if err := r.waitForSchedule(context.Background(), "39721", "sched-1"); err != nil {
+		t.Fatalf("waitForSchedule: %v", err)
+	}
+	if calls != len(states)-1 {
+		t.Errorf("polled %d times, expected to poll through every transient state", calls+1)
+	}
+}
+
+// A cancelled context must stop the poll instead of spinning to the timeout.
+func TestWaitForSchedule_HonoursContext(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":"1","data":{"status":"CREATING"}}`))
+	}))
+	defer srv.Close()
+
+	r := &BackupSchedulerResource{client: client.NewClient(srv.URL, "tok"), customerID: "1", defaultVpcID: "39721"}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := r.waitForSchedule(ctx, "39721", "sched-1"); err == nil {
+		t.Fatal("expected the poll to stop when the context is done")
 	}
 }
