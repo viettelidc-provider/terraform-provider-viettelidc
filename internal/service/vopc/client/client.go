@@ -60,16 +60,6 @@ func (c *Client) WithHTTPClient(h *http.Client) *Client {
 	return c
 }
 
-// WithBaseURL returns a copy of the client aimed at a different host, keeping
-// the same tokens. Not every CMP service lives behind the IaC host: the backup
-// service is served from the public gateway (api.viettelidc.com.vn) with its
-// own REST-style paths.
-func (c *Client) WithBaseURL(baseURL string) *Client {
-	cp := *c
-	cp.baseURL = strings.TrimRight(baseURL, "/")
-	return &cp
-}
-
 // Do executes a CSA request: POST {baseURL}{path} with JSON body and auth
 // headers. It returns the raw response body bytes on HTTP 2xx. Retry policy
 // is applied per retry.go (5xx + network errors only; 4xx including 401 fail

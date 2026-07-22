@@ -2,29 +2,25 @@
 page_title: "viettelidc_ovpc_backup_plan Resource - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  ViettelIDC Backup Schedule — periodic backups of whole VMs. The API exposes create, read and delete only, so every configurable attribute forces replacement.
+  ViettelIDC Backup Plan for scheduling volume backups.
 ---
 
 # viettelidc_ovpc_backup_plan (Resource)
 
-ViettelIDC Backup Schedule — periodic backups of whole VMs. The API exposes create, read and delete only, so every configurable attribute forces replacement.
+ViettelIDC Backup Plan for scheduling volume backups.
 
 ## Example Usage
 
 ```terraform
 resource "viettelidc_ovpc_backup_plan" "daily" {
   name             = "daily-backup"
-  description      = "Daily backup at 04:00"
-  cycle            = "DAILY"
-  start_date       = "2026-09-01"
-  start_time       = "04:00:00"
+  description      = "Daily backup at 2 AM"
+  backup_cycle_id  = 1
+  start_day_backup = "2024-01-01"
+  time_backup      = "02:00:00"
   number_of_record = 7
-
-  # Numeric instance ids are resolved to the backup service's VM UUIDs.
-  # A UUID can also be given directly.
-  vm_ids = [viettelidc_ovpc_instance.vm.id]
-
-  vpc_id = data.viettelidc_ovpc_vpc.main.id
+  volume_ids       = [viettelidc_ovpc_volume.data.id]
+  vpc_id           = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
@@ -33,20 +29,20 @@ resource "viettelidc_ovpc_backup_plan" "daily" {
 
 ### Required
 
-- `cycle` (String) Backup frequency, e.g. "DAILY".
-- `name` (String) Backup schedule name.
-- `number_of_record` (Number) How many backup records to keep.
-- `start_date` (String) First backup date, YYYY-MM-DD.
-- `start_time` (String) Time of day to run the backup, HH:MM:SS.
-- `vm_ids` (List of String) VMs to back up. Accepts either the numeric instance id (viettelidc_ovpc_instance.x.id) or the backup service's VM UUID — numeric ids are resolved automatically. Only VMs the backup service offers for the VPC can be used.
+- `backup_cycle_id` (Number) ID of the backup cycle (e.g., daily, weekly).
+- `name` (String) Human-readable Backup Plan name.
+- `number_of_record` (Number) Number of backup records to retain.
+- `start_day_backup` (String) Start date for backup in YYYY-MM-DD format.
+- `time_backup` (String) Time for backup in HH:MM:SS format.
+- `volume_ids` (List of String) List of volume IDs to include in the backup plan.
 
 ### Optional
 
-- `description` (String) Optional description.
-- `vpc_id` (String) VPC ID. Falls back to the provider default vpc_id.
+- `description` (String) Description of the Backup Plan.
+- `vpc_id` (String) VPC ID. Uses provider default if not specified.
 
 ### Read-Only
 
-- `id` (String) Backup schedule UUID.
-- `next_time` (String) Timestamp of the next scheduled run.
-- `status` (String) Current schedule status.
+- `backup_cycle_name` (String) Name of the backup cycle.
+- `id` (String) Backup Plan ID assigned by the system.
+- `status` (String) Current status of the Backup Plan.

@@ -41,7 +41,7 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `availability_zone` (String) Availability zone.
 - `cpu` (Number) Number of vCPUs.
 - `instance_type_id` (Number) Instance type (package) integer ID.
-- `key_pair_id` (String) Key pair ID to inject into the instance. Resolved from key_pair_name when omitted — the create endpoint needs the id, and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).
+- `key_pair_id` (String) Key pair ID to inject into the instance.
 - `key_pair_name` (String) Key pair name to inject into the instance.
 - `memory` (Number) RAM in GB.
 - `security_group_ids` (List of String) List of Security Group IDs to attach.

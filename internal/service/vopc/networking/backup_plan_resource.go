@@ -7,9 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"os"
-	"regexp"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -29,23 +26,6 @@ var (
 	_ resource.ResourceWithImportState = (*BackupPlanResource)(nil)
 )
 
-// defaultBackupBaseURL is the public gateway that serves the backup service.
-// Override with VIETTELIDC_BACKUP_BASE_URL.
-const defaultBackupBaseURL = "https://api.viettelidc.com.vn"
-
-var uuidRe = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
-
-// BackupPlanResource implements `viettelidc_ovpc_backup_plan`.
-//
-// It talks to the backup service on the public gateway:
-//
-//	POST   /backup/api/v1/vpc/{vpcID}/backup-schedules
-//	GET    /backup/api/v1/vpc/{vpcID}/backup-schedules/{id}
-//	DELETE /backup/api/v1/vpc/{vpcID}/backup-schedules/{id}
-//
-// The /csa/api/v1/storage/backup-plan/* endpoints this resource used to call
-// are a different, empty store that rejects every create with
-// ERROR_NOT_ALLOWED_CREATE_BACKUP_SCHEDULER_ACTION.
 type BackupPlanResource struct {
 	client       *client.Client
 	customerID   string
@@ -53,17 +33,17 @@ type BackupPlanResource struct {
 }
 
 type BackupPlanResourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	Name           types.String `tfsdk:"name"`
-	Description    types.String `tfsdk:"description"`
-	Cycle          types.String `tfsdk:"cycle"`
-	StartDate      types.String `tfsdk:"start_date"`
-	StartTime      types.String `tfsdk:"start_time"`
-	NumberOfRecord types.Int64  `tfsdk:"number_of_record"`
-	VMIDs          types.List   `tfsdk:"vm_ids"`
-	Status         types.String `tfsdk:"status"`
-	NextTime       types.String `tfsdk:"next_time"`
-	VpcID          types.String `tfsdk:"vpc_id"`
+	ID              types.String `tfsdk:"id"`
+	Name            types.String `tfsdk:"name"`
+	Description     types.String `tfsdk:"description"`
+	BackupCycleID   types.Int64  `tfsdk:"backup_cycle_id"`
+	StartDayBackup  types.String `tfsdk:"start_day_backup"`
+	TimeBackup      types.String `tfsdk:"time_backup"`
+	NumberOfRecord  types.Int64  `tfsdk:"number_of_record"`
+	VolumeIDs       types.List   `tfsdk:"volume_ids"`
+	VpcID           types.String `tfsdk:"vpc_id"`
+	Status          types.String `tfsdk:"status"`
+	BackupCycleName types.String `tfsdk:"backup_cycle_name"`
 }
 
 func NewBackupPlanResource() resource.Resource { return &BackupPlanResource{} }
@@ -73,93 +53,74 @@ func (r *BackupPlanResource) Metadata(_ context.Context, req resource.MetadataRe
 }
 
 func (r *BackupPlanResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	forceNew := []planmodifier.String{stringplanmodifier.RequiresReplace()}
 	resp.Schema = schema.Schema{
-		Description: "ViettelIDC Backup Schedule — periodic backups of whole VMs. " +
-			"The API exposes create, read and delete only, so every configurable attribute forces replacement.",
+		Description: "ViettelIDC Backup Plan for scheduling volume backups.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
-				Computed:      true,
-				Description:   "Backup schedule UUID.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Computed:    true,
+				Description: "Backup Plan ID assigned by the system.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"name": schema.StringAttribute{
-				Required:      true,
-				Description:   "Backup schedule name.",
-				PlanModifiers: forceNew,
+				Required:    true,
+				Description: "Human-readable Backup Plan name.",
 			},
 			"description": schema.StringAttribute{
-				Optional:      true,
-				Description:   "Optional description.",
-				PlanModifiers: forceNew,
+				Optional:    true,
+				Description: "Description of the Backup Plan.",
 			},
-			"cycle": schema.StringAttribute{
-				Required:      true,
-				Description:   `Backup frequency, e.g. "DAILY".`,
-				PlanModifiers: forceNew,
+			"backup_cycle_id": schema.Int64Attribute{
+				Required:    true,
+				Description: "ID of the backup cycle (e.g., daily, weekly).",
 			},
-			"start_date": schema.StringAttribute{
-				Required:      true,
-				Description:   "First backup date, YYYY-MM-DD.",
-				PlanModifiers: forceNew,
+			"start_day_backup": schema.StringAttribute{
+				Required:    true,
+				Description: "Start date for backup in YYYY-MM-DD format.",
 			},
-			"start_time": schema.StringAttribute{
-				Required:      true,
-				Description:   "Time of day to run the backup, HH:MM:SS.",
-				PlanModifiers: forceNew,
+			"time_backup": schema.StringAttribute{
+				Required:    true,
+				Description: "Time for backup in HH:MM:SS format.",
 			},
 			"number_of_record": schema.Int64Attribute{
 				Required:    true,
-				Description: "How many backup records to keep.",
+				Description: "Number of backup records to retain.",
 			},
-			"vm_ids": schema.ListAttribute{
+			"volume_ids": schema.ListAttribute{
 				Required:    true,
 				ElementType: types.StringType,
-				Description: "VMs to back up. Accepts either the numeric instance id " +
-					"(viettelidc_ovpc_instance.x.id) or the backup service's VM UUID — numeric " +
-					"ids are resolved automatically. Only VMs the backup service offers for the " +
-					"VPC can be used.",
+				Description: "List of volume IDs to include in the backup plan.",
+			},
+			"vpc_id": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "VPC ID. Uses provider default if not specified.",
 			},
 			"status": schema.StringAttribute{
 				Computed:    true,
-				Description: "Current schedule status.",
+				Description: "Current status of the Backup Plan.",
 			},
-			"next_time": schema.StringAttribute{
+			"backup_cycle_name": schema.StringAttribute{
 				Computed:    true,
-				Description: "Timestamp of the next scheduled run.",
-			},
-			"vpc_id": schema.StringAttribute{
-				Optional:      true,
-				Computed:      true,
-				Description:   "VPC ID. Falls back to the provider default vpc_id.",
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Description: "Name of the backup cycle.",
 			},
 		},
 	}
 }
 
 func (r *BackupPlanResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+	if req.ProviderData == nil {
+		return
+	}
 	pd, diags := providerDataFrom(req.ProviderData)
 	resp.Diagnostics.Append(diags...)
-	if pd == nil {
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	r.client = pd.Client
 	r.customerID = pd.CustomerID
 	r.defaultVpcID = pd.DefaultVpcID
-}
-
-// backupClient returns the shared client aimed at the backup gateway.
-func (r *BackupPlanResource) backupClient() *client.Client {
-	baseURL := os.Getenv("VIETTELIDC_BACKUP_BASE_URL")
-	if baseURL == "" {
-		baseURL = defaultBackupBaseURL
-	}
-	return r.client.WithBaseURL(baseURL)
-}
-
-func schedulesPath(vpcID string) string {
-	return fmt.Sprintf("/backup/api/v1/vpc/%s/backup-schedules", vpcID)
 }
 
 func (r *BackupPlanResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -168,53 +129,80 @@ func (r *BackupPlanResource) Create(ctx context.Context, req resource.CreateRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	vpcID, diags := resolveVpcID(plan.VpcID.ValueString(), r.defaultVpcID)
+
+	vpcID := defaultIfEmpty(plan.VpcID, r.defaultVpcID)
+	if vpcID == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("vpc_id"), "Missing vpc_id", "Set 'vpc_id' or configure provider default.")
+		return
+	}
+
+	// Convert volume IDs to the expected format
+	var volumeIDs []string
+	resp.Diagnostics.Append(plan.VolumeIDs.ElementsAs(ctx, &volumeIDs, false)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	listVolumes := make([]map[string]interface{}, len(volumeIDs))
+	for i, vid := range volumeIDs {
+		listVolumes[i] = map[string]interface{}{"id": parseInt(vid)}
+	}
+
+	body := map[string]interface{}{
+		"vpc_id":           vpcID,
+		"customer_id":      r.customerID,
+		"name":             plan.Name.ValueString(),
+		"description":      plan.Description.ValueString(),
+		"vttBackupCycleId": plan.BackupCycleID.ValueInt64(),
+		"startDayBackup":   plan.StartDayBackup.ValueString(),
+		"timeBackup":       plan.TimeBackup.ValueString(),
+		"numberOfRecord":   plan.NumberOfRecord.ValueInt64(),
+		"listVolumes":      listVolumes,
+	}
+
+	apiResp, diags := callAPI(ctx, r.client, pathBackupPlanCreate, body)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	vmIDs, d := r.resolveVMIDs(ctx, plan.VMIDs, vpcID)
-	resp.Diagnostics.Append(d...)
-	if resp.Diagnostics.HasError() {
+	var result struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    int64  `json:"data"`
+	}
+	if err := json.Unmarshal(apiResp.Data, &result); err != nil {
+		resp.Diagnostics.AddError("Parse Error", err.Error())
 		return
 	}
 
-	body := map[string]interface{}{
-		"name":           plan.Name.ValueString(),
-		"cycle":          plan.Cycle.ValueString(),
-		"numberOfRecord": fmt.Sprintf("%d", plan.NumberOfRecord.ValueInt64()),
-		"vmIds":          vmIDs,
-		"startTime":      plan.StartTime.ValueString(),
-		"startDate":      plan.StartDate.ValueString(),
-		"vpcId":          parseInt(vpcID),
-		"customerId":     parseInt(r.customerID),
-	}
-	if v := plan.Description.ValueString(); v != "" {
-		body["description"] = v
-	}
-
-	raw, err := r.backupClient().DoMethod(ctx, http.MethodPost, schedulesPath(vpcID), body)
-	if err != nil {
-		resp.Diagnostics.AddError("Backup schedule create failed", err.Error())
-		return
-	}
-	id, err := extractBackupScheduleID(raw)
-	if err != nil {
-		resp.Diagnostics.AddError("Backup schedule create response has no id", err.Error())
-		return
-	}
-
-	plan.ID = types.StringValue(id)
+	plan.ID = types.StringValue(fmt.Sprintf("%d", result.Data))
 	plan.VpcID = types.StringValue(vpcID)
-	if !r.readInto(ctx, &plan, &resp.Diagnostics) {
-		resp.Diagnostics.AddError("Backup schedule vanished", "the schedule was created but could not be read back")
-		return
-	}
+
+	// Fetch details to get computed fields
+	r.readAndMerge(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+
+	// Report creation status to the user so they are aware of async state.
+	switch strings.ToUpper(plan.Status.ValueString()) {
+	case "ERROR", "FAILED":
+		resp.Diagnostics.AddError(
+			"Backup Plan entered an error state",
+			fmt.Sprintf("Backup Plan %s has status %q. Check the ViettelIDC console.", plan.ID.ValueString(), plan.Status.ValueString()),
+		)
+		return
+	case "ACTIVE", "SUCCESS", "":
+		// ready — no action needed
+	default:
+		resp.Diagnostics.AddWarning(
+			"Backup Plan is still provisioning",
+			fmt.Sprintf("Backup Plan %s has status %q. Run 'terraform refresh' to update once it is ready.", plan.ID.ValueString(), plan.Status.ValueString()),
+		)
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *BackupPlanResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -223,18 +211,54 @@ func (r *BackupPlanResource) Read(ctx context.Context, req resource.ReadRequest,
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	if !r.readInto(ctx, &state, &resp.Diagnostics) {
-		resp.State.RemoveResource(ctx)
-		return
-	}
+
+	r.readAndMerge(ctx, &state, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
-// Update is unreachable: every configurable attribute forces replacement.
-func (r *BackupPlanResource) Update(_ context.Context, _ resource.UpdateRequest, _ *resource.UpdateResponse) {
+func (r *BackupPlanResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan BackupPlanResourceModel
+	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	var state BackupPlanResourceModel
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	body := map[string]interface{}{
+		"vpc_id":           plan.VpcID.ValueString(),
+		"customer_id":      r.customerID,
+		"id":               plan.ID.ValueString(),
+		"name":             plan.Name.ValueString(),
+		"description":      plan.Description.ValueString(),
+		"vttBackupCycleId": plan.BackupCycleID.ValueInt64(),
+		"startDayBackup":   plan.StartDayBackup.ValueString(),
+		"timeBackup":       plan.TimeBackup.ValueString(),
+		"numberOfRecord":   plan.NumberOfRecord.ValueInt64(),
+	}
+
+	_, diags := callAPI(ctx, r.client, pathBackupPlanUpdate, body)
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Handle volume changes separately if needed
+	// For now, we'll refetch and update the state
+	r.readAndMerge(ctx, &plan, &resp.Diagnostics)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
 
 func (r *BackupPlanResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -243,16 +267,22 @@ func (r *BackupPlanResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	vpcID := state.VpcID.ValueString()
-	if vpcID == "" {
-		vpcID = r.defaultVpcID
+
+	body := map[string]interface{}{
+		"vpc_id":       state.VpcID.ValueString(),
+		"customer_id":  r.customerID,
+		"id":           state.ID.ValueString(),
+		"isAutoDelete": false,
 	}
-	p := schedulesPath(vpcID) + "/" + state.ID.ValueString()
-	if _, err := r.backupClient().DoMethod(ctx, http.MethodDelete, p, nil); err != nil {
-		if isBackupNotFound(err) {
-			return // already gone — idempotent
+
+	apiResp, diags := callAPI(ctx, r.client, pathBackupPlanDelete, body)
+	resp.Diagnostics.Append(diags...)
+
+	if apiResp != nil && !apiResp.IsSuccess() {
+		if isNotFoundMessage(apiResp.Message) {
+			return
 		}
-		resp.Diagnostics.AddError("Backup schedule delete failed", err.Error())
+		resp.Diagnostics.AddError("Delete Error", apiResp.Message)
 	}
 }
 
@@ -260,178 +290,83 @@ func (r *BackupPlanResource) ImportState(ctx context.Context, req resource.Impor
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
-// readInto refreshes m from the API. Returns false when the schedule is gone.
-func (r *BackupPlanResource) readInto(ctx context.Context, m *BackupPlanResourceModel, diags *diag.Diagnostics) bool {
-	vpcID := m.VpcID.ValueString()
-	if vpcID == "" {
-		vpcID = r.defaultVpcID
-	}
-	p := schedulesPath(vpcID) + "/" + m.ID.ValueString()
-	raw, err := r.backupClient().DoMethod(ctx, http.MethodGet, p, nil)
-	if err != nil {
-		if isBackupNotFound(err) {
-			return false
-		}
-		diags.AddError("Backup schedule read failed", err.Error())
-		return true
+func (r *BackupPlanResource) readAndMerge(ctx context.Context, model *BackupPlanResourceModel, diags *diag.Diagnostics) {
+	if model.VpcID.ValueString() == "" || model.ID.ValueString() == "" {
+		return
 	}
 
-	var env struct {
-		Data struct {
-			ID             string `json:"id"`
-			Name           string `json:"name"`
-			Description    string `json:"description"`
-			Cycle          string `json:"cycle"`
-			StartTime      string `json:"startTime"`
-			StartDate      string `json:"startDate"`
-			NumberOfRecord int64  `json:"numberOfRecord"`
-			Status         string `json:"status"`
-			NextTime       string `json:"nextTime"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		diags.AddError("Backup schedule decode failed", err.Error())
-		return true
-	}
-	d := env.Data
-	m.ID = types.StringValue(d.ID)
-	m.Name = types.StringValue(d.Name)
-	m.Cycle = types.StringValue(d.Cycle)
-	m.StartTime = types.StringValue(d.StartTime)
-	m.StartDate = types.StringValue(d.StartDate)
-	m.NumberOfRecord = types.Int64Value(d.NumberOfRecord)
-	m.Status = types.StringValue(d.Status)
-	m.NextTime = types.StringValue(d.NextTime)
-	m.VpcID = types.StringValue(vpcID)
-	if d.Description != "" {
-		m.Description = types.StringValue(d.Description)
-	}
-	return true
-}
-
-// resolveVMIDs turns the configured vm_ids into the UUIDs the backup service
-// expects. UUIDs pass through; a numeric IaC instance id is resolved by looking
-// up the instance name and matching it against the VMs the backup service
-// offers for this VPC.
-func (r *BackupPlanResource) resolveVMIDs(ctx context.Context, list types.List, vpcID string) ([]string, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	var configured []string
-	diags.Append(list.ElementsAs(ctx, &configured, false)...)
-	if diags.HasError() {
-		return nil, diags
-	}
-
-	var backupVMs map[string]string // name -> uuid, fetched lazily
-	out := make([]string, 0, len(configured))
-	for _, v := range configured {
-		if uuidRe.MatchString(v) {
-			out = append(out, v)
-			continue
-		}
-		if backupVMs == nil {
-			var err error
-			backupVMs, err = r.listBackupVMs(ctx, vpcID)
-			if err != nil {
-				diags.AddError("Cannot list VMs available for backup", err.Error())
-				return nil, diags
-			}
-		}
-		name, err := r.instanceName(ctx, v, vpcID)
-		if err != nil {
-			diags.AddError("Cannot resolve instance "+v, err.Error())
-			return nil, diags
-		}
-		uuid, ok := backupVMs[name]
-		if !ok {
-			names := make([]string, 0, len(backupVMs))
-			for n := range backupVMs {
-				names = append(names, n)
-			}
-			diags.AddError(
-				"VM is not available for backup",
-				fmt.Sprintf("instance %s (%q) is not offered by the backup service for VPC %s. Available: %s",
-					v, name, vpcID, strings.Join(names, ", ")),
-			)
-			return nil, diags
-		}
-		out = append(out, uuid)
-	}
-	return out, diags
-}
-
-// listBackupVMs returns name -> UUID for the VMs the backup service accepts.
-func (r *BackupPlanResource) listBackupVMs(ctx context.Context, vpcID string) (map[string]string, error) {
-	raw, err := r.backupClient().DoMethod(ctx, http.MethodGet,
-		fmt.Sprintf("/backup/api/v1/vpc/%s/vms", vpcID), nil)
-	if err != nil {
-		return nil, err
-	}
-	var env struct {
-		Items []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
-	}
-	out := make(map[string]string, len(env.Items))
-	for _, it := range env.Items {
-		out[it.Name] = it.ID
-	}
-	return out, nil
-}
-
-// instanceName looks up an instance's name from its numeric id via the IaC API.
-func (r *BackupPlanResource) instanceName(ctx context.Context, instanceID, vpcID string) (string, error) {
-	apiResp, diags := callAPI(ctx, r.client, pathVMDetail, map[string]interface{}{
-		"instance_id": instanceID,
-		"vpc_id":      vpcID,
+	body := map[string]interface{}{
+		"vpc_id":      model.VpcID.ValueString(),
 		"customer_id": r.customerID,
-	})
+		"page_index":  0,
+		"page_size":   1000,
+		"filters":     []map[string]interface{}{},
+	}
+
+	apiResp, callDiags := callAPI(ctx, r.client, pathBackupPlanList, body)
+	diags.Append(callDiags...)
 	if diags.HasError() {
-		msg := "unknown error"
-		if errs := diags.Errors(); len(errs) > 0 {
-			msg = errs[0].Detail()
-		}
-		return "", fmt.Errorf("vm detail: %s", msg)
+		return
 	}
-	var data map[string]interface{}
-	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
-		return "", err
-	}
-	name := asString(data, "name")
-	if name == "" {
-		return "", fmt.Errorf("vm %s has no name", instanceID)
-	}
-	return name, nil
-}
 
-// ---------- Pure helpers ----------
-
-func extractBackupScheduleID(raw []byte) (string, error) {
-	var env struct {
-		Data struct {
-			ID string `json:"id"`
+	var listResp struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Content []struct {
+				ID               int64  `json:"id"`
+				Name             string `json:"name"`
+				Description      string `json:"description"`
+				VttBackupCycleID int64  `json:"vttBackupCycleId"`
+				BackupCycleName  string `json:"backupCycleName"`
+				StartDayBackup   string `json:"startDayBackup"`
+				TimeBackup       string `json:"timeBackup"`
+				NumberOfRecord   int    `json:"numberOfRecord"`
+				Status           string `json:"status"`
+				ListVolume       []struct {
+					ID int64 `json:"id"`
+				} `json:"listVolume"`
+			} `json:"content"`
 		} `json:"data"`
-		ID string `json:"id"`
 	}
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return "", err
-	}
-	if env.Data.ID != "" {
-		return env.Data.ID, nil
-	}
-	if env.ID != "" {
-		return env.ID, nil
-	}
-	return "", fmt.Errorf("no id in response: %.256s", string(raw))
-}
 
-func isBackupNotFound(err error) bool {
-	if err == nil {
-		return false
+	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
+		diags.AddError("Parse Error", err.Error())
+		return
 	}
-	s := err.Error()
-	return strings.Contains(s, "HTTP 404") || strings.Contains(s, "ERROR.NOT.FOUND")
+
+	targetID := model.ID.ValueString()
+	for _, item := range listResp.Data.Content {
+		if fmt.Sprintf("%d", item.ID) == targetID {
+			model.Name = types.StringValue(item.Name)
+			model.Description = types.StringValue(item.Description)
+			model.BackupCycleID = types.Int64Value(item.VttBackupCycleID)
+			model.BackupCycleName = types.StringValue(item.BackupCycleName)
+			model.StartDayBackup = types.StringValue(item.StartDayBackup)
+			model.TimeBackup = types.StringValue(item.TimeBackup)
+			model.NumberOfRecord = types.Int64Value(int64(item.NumberOfRecord))
+			model.Status = types.StringValue(item.Status)
+
+			// Fail fast if backup plan entered a terminal error state.
+			if st := strings.ToUpper(item.Status); st == "ERROR" || st == "FAILED" {
+				diags.AddError(
+					"Backup Plan is in error state",
+					fmt.Sprintf("Backup Plan %s has status=%s. Destroy and re-create it before proceeding.", targetID, item.Status),
+				)
+				return
+			}
+
+			// Convert volume IDs
+			volumeIDs := make([]string, len(item.ListVolume))
+			for i, v := range item.ListVolume {
+				volumeIDs[i] = fmt.Sprintf("%d", v.ID)
+			}
+			volList, d := types.ListValueFrom(ctx, types.StringType, volumeIDs)
+			diags.Append(d...)
+			model.VolumeIDs = volList
+			return
+		}
+	}
+
+	diags.AddError("Not Found", fmt.Sprintf("Backup Plan %s not found", targetID))
 }
