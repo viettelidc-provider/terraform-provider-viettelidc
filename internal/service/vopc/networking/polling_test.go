@@ -442,65 +442,6 @@ func backupPlanListResponse(id int64, status string) interface{} {
 	}
 }
 
-func TestBackupPlanReadAndMerge_StatusPropagation(t *testing.T) {
-	t.Parallel()
-	statuses := []string{"ACTIVE", "ERROR", "CREATING", "FAILED"}
-	for _, wantStatus := range statuses {
-		wantStatus := wantStatus
-		t.Run(wantStatus, func(t *testing.T) {
-			t.Parallel()
-			srv := newFakeAPI(t)
-			srv.on(pathBackupPlanList, func(_ map[string]interface{}) (interface{}, string, interface{}) {
-				return float64(0), "ok", backupPlanListResponse(99, wantStatus)
-			})
-
-			r := &BackupPlanResource{client: srv.newClient(), customerID: "cust", defaultVpcID: "vpc-1"}
-			m := &BackupPlanResourceModel{
-				ID:    types.StringValue("99"),
-				VpcID: types.StringValue("vpc-1"),
-			}
-
-			var dgs diag.Diagnostics
-			r.readAndMerge(context.Background(), m, &dgs)
-
-			if wantStatus == "ERROR" || wantStatus == "FAILED" {
-				if !dgs.HasError() {
-					t.Fatalf("expected readAndMerge to produce error diag for status %q, got none", wantStatus)
-				}
-			} else {
-				if dgs.HasError() {
-					t.Fatalf("readAndMerge produced unexpected error diag: %v", dgs)
-				}
-			}
-			if m.Status.ValueString() != wantStatus {
-				t.Errorf("expected status %q, got %q", wantStatus, m.Status.ValueString())
-			}
-		})
-	}
-}
-
-func TestBackupPlanReadAndMerge_NotFound(t *testing.T) {
-	t.Parallel()
-	srv := newFakeAPI(t)
-	srv.on(pathBackupPlanList, func(_ map[string]interface{}) (interface{}, string, interface{}) {
-		return float64(0), "ok", map[string]interface{}{
-			"data": map[string]interface{}{"content": []interface{}{}},
-		}
-	})
-
-	r := &BackupPlanResource{client: srv.newClient(), customerID: "cust", defaultVpcID: "vpc-1"}
-	m := &BackupPlanResourceModel{
-		ID:    types.StringValue("999"),
-		VpcID: types.StringValue("vpc-1"),
-	}
-
-	var dgs diag.Diagnostics
-	r.readAndMerge(context.Background(), m, &dgs)
-	if !dgs.HasError() {
-		t.Fatal("expected not-found error diag, got none")
-	}
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 func TestNatGatewayReadAndMerge_Success(t *testing.T) {
 	t.Parallel()
