@@ -279,14 +279,14 @@ func TestBuildAutoscaleGroupCreateBody_LoadBalancerMode(t *testing.T) {
 			t.Errorf("%s must not be sent when is_autoscale is false", k)
 		}
 	}
-	if body["loadbalancerId"] != "929" || body["loadbalancerPoolId"] != "2024" {
-		t.Errorf("load balancer ids missing or renamed: %v", body)
+	if body["loadbalancer_id"] != "929" || body["loadbalancer_pool_id"] != "2024" {
+		t.Errorf("load balancer ids missing: %v", body)
 	}
-	if body["subnetId"] != int64(9935) {
-		t.Errorf("subnetId must be an integer, got %#v", body["subnetId"])
+	if body["subnet_id"] != int64(9935) {
+		t.Errorf("subnet_id must be an integer, got %#v", body["subnet_id"])
 	}
-	if body["portNumber"] != int64(1) {
-		t.Errorf("portNumber missing, got %#v", body["portNumber"])
+	if body["port_number"] != int64(1) {
+		t.Errorf("port_number missing, got %#v", body["port_number"])
 	}
 }
 
@@ -309,7 +309,7 @@ func TestBuildAutoscaleGroupCreateBody_AutoscaleModeOmitsLBFields(t *testing.T) 
 	if body["min_size"] != int64(1) || body["max_size"] != int64(3) || body["metric_type"] != "CPU" {
 		t.Errorf("autoscale fields missing: %v", body)
 	}
-	for _, k := range []string{"loadbalancerId", "loadbalancerPoolId", "subnetId", "portNumber"} {
+	for _, k := range []string{"loadbalancer_id", "loadbalancer_pool_id", "subnet_id", "port_number"} {
 		if _, ok := body[k]; ok {
 			t.Errorf("%s must not be sent when it is not configured", k)
 		}

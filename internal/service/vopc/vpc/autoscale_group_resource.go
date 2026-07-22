@@ -474,15 +474,13 @@ func buildAutoscaleGroupCreateBody(plan AutoscaleGroupResourceModel, customerID,
 		body["has_load_balancer"] = plan.HasLoadBalancer.ValueBool()
 	}
 
-	// TODO: add these four to the autoscale-group/create rename list in
-	// kong.yaml, then switch them to snake_case like every other field here.
-	// Until that is deployed they go out already camelCased so the gateway
-	// forwards them untouched.
+	// Load-balancer mode fields. kong.yaml renames these to camelCase like the
+	// rest, so they go out snake_case here.
 	if v := plan.LoadBalancerID.ValueString(); v != "" {
-		body["loadbalancerId"] = v
+		body["loadbalancer_id"] = v
 	}
 	if v := plan.LoadBalancerPoolID.ValueString(); v != "" {
-		body["loadbalancerPoolId"] = v
+		body["loadbalancer_pool_id"] = v
 	}
 	if v := plan.SubnetID.ValueString(); v != "" {
 		// subnetId goes out as an integer; the console sends 9935, not "9935".
@@ -490,10 +488,10 @@ func buildAutoscaleGroupCreateBody(plan AutoscaleGroupResourceModel, customerID,
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			subnetVal = n
 		}
-		body["subnetId"] = subnetVal
+		body["subnet_id"] = subnetVal
 	}
 	if !plan.PortNumber.IsNull() && !plan.PortNumber.IsUnknown() {
-		body["portNumber"] = plan.PortNumber.ValueInt64()
+		body["port_number"] = plan.PortNumber.ValueInt64()
 	}
 	return body
 }
