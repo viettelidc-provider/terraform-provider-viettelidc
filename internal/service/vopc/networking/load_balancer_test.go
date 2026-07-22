@@ -397,3 +397,55 @@ func TestLoadBalancerDataSource_LookupByIPAddress(t *testing.T) {
 		t.Errorf("new fields not populated: %+v", got)
 	}
 }
+
+// A NETWORK TCP-UDP load balancer cannot serve HTTP. The API accepts the
+// request anyway and builds a load balancer nothing can reach, so the config
+// has to be stopped at plan time.
+func TestValidateListenerProtocol(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		lbType   string
+		protocol string
+		wantErr  bool
+	}{
+		{name: "network with udp", lbType: "NETWORK TCP-UDP", protocol: "UDP"},
+		{name: "network with tcp", lbType: "NETWORK TCP-UDP", protocol: "TCP"},
+		{name: "network with http", lbType: "NETWORK TCP-UDP", protocol: "HTTP", wantErr: true},
+		{name: "application with https", lbType: "APPLICATION HTTP-HTTPS", protocol: "HTTPS"},
+		{name: "application with tcp", lbType: "APPLICATION HTTP-HTTPS", protocol: "TCP", wantErr: true},
+		{name: "unknown lb type is not second-guessed", lbType: "SOMETHING NEW", protocol: "HTTP"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diags := validateListenerProtocol(types.StringValue(tc.lbType), types.StringValue(tc.protocol))
+			if diags.HasError() != tc.wantErr {
+				t.Fatalf("lbType=%q protocol=%q: got error=%v, want %v (%v)",
+					tc.lbType, tc.protocol, diags.HasError(), tc.wantErr, diags)
+			}
+		})
+	}
+}
+
+// Omitting the new attributes has to keep producing the load balancer configs
+// written before they existed.
+func TestLoadBalancerListenerPoolDefaults(t *testing.T) {
+	t.Parallel()
+	if got := defaultStr(types.StringNull(), "web-pool"); got != "web-pool" {
+		t.Errorf("null should fall back, got %q", got)
+	}
+	if got := defaultStr(types.StringValue(""), "web-pool"); got != "web-pool" {
+		t.Errorf("empty string should fall back, got %q", got)
+	}
+	if got := defaultStr(types.StringValue("custom"), "web-pool"); got != "custom" {
+		t.Errorf("set value should win, got %q", got)
+	}
+	if got := defaultInt(types.Int64Null(), 80); got != 80 {
+		t.Errorf("null port should fall back, got %d", got)
+	}
+	if got := defaultInt(types.Int64Value(53), 80); got != 53 {
+		t.Errorf("set port should win, got %d", got)
+	}
+}

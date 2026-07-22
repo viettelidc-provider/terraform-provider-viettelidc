@@ -22,3 +22,24 @@ resource "viettelidc_ovpc_load_balancer" "web" {
     },
   ]
 }
+
+# The listener, pool and health check are created along with the load balancer.
+# Left out they default to HTTP:80, ROUND_ROBIN and an HTTP GET / check, which
+# is wrong for anything that is not a web tier.
+resource "viettelidc_ovpc_load_balancer" "tcp" {
+  name              = "db-lb"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "NETWORK TCP-UDP"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  listener_protocol        = "TCP"
+  listener_port            = 5432
+  pool_algorithm           = "LEAST_CONNECTIONS"
+  pool_session_persistence = "SOURCE_IP"
+
+  # Not every listener protocol accepts every check; the API rejects the bad
+  # pairs with LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL.
+  monitor_type  = "PING"
+  monitor_delay = 10
+}

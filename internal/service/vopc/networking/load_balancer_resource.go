@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -18,9 +20,11 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 
@@ -28,9 +32,10 @@ import (
 )
 
 var (
-	_ resource.Resource                = (*LoadBalancerResource)(nil)
-	_ resource.ResourceWithConfigure   = (*LoadBalancerResource)(nil)
-	_ resource.ResourceWithImportState = (*LoadBalancerResource)(nil)
+	_ resource.Resource                   = (*LoadBalancerResource)(nil)
+	_ resource.ResourceWithConfigure      = (*LoadBalancerResource)(nil)
+	_ resource.ResourceWithImportState    = (*LoadBalancerResource)(nil)
+	_ resource.ResourceWithValidateConfig = (*LoadBalancerResource)(nil)
 )
 
 type LoadBalancerResource struct {
@@ -52,12 +57,29 @@ type LoadBalancerResourceModel struct {
 	Status           types.String `tfsdk:"status"`
 	OperatingStatus  types.String `tfsdk:"operating_status"`
 
-	IPAddress            types.String      `tfsdk:"ip_address"`
-	ProvisioningStatus   types.String      `tfsdk:"provisioning_status"`
-	IsPublicLoadBalancer types.Bool        `tfsdk:"is_public_loadbalancer"`
-	Listeners            types.List        `tfsdk:"listeners"`
-	Pools                types.List        `tfsdk:"pools"`
-	PoolMembers          []PoolMemberInput `tfsdk:"pool_members"`
+	IPAddress            types.String `tfsdk:"ip_address"`
+	ProvisioningStatus   types.String `tfsdk:"provisioning_status"`
+	IsPublicLoadBalancer types.Bool   `tfsdk:"is_public_loadbalancer"`
+
+	ListenerName           types.String `tfsdk:"listener_name"`
+	ListenerProtocol       types.String `tfsdk:"listener_protocol"`
+	ListenerPort           types.Int64  `tfsdk:"listener_port"`
+	PoolName               types.String `tfsdk:"pool_name"`
+	PoolAlgorithm          types.String `tfsdk:"pool_algorithm"`
+	PoolSessionPersistence types.String `tfsdk:"pool_session_persistence"`
+
+	MonitorName           types.String      `tfsdk:"monitor_name"`
+	MonitorType           types.String      `tfsdk:"monitor_type"`
+	MonitorDelay          types.Int64       `tfsdk:"monitor_delay"`
+	MonitorTimeout        types.Int64       `tfsdk:"monitor_timeout"`
+	MonitorMaxRetries     types.Int64       `tfsdk:"monitor_max_retries"`
+	MonitorMaxRetriesDown types.Int64       `tfsdk:"monitor_max_retries_down"`
+	MonitorHTTPMethod     types.String      `tfsdk:"monitor_http_method"`
+	MonitorExpectedCode   types.Int64       `tfsdk:"monitor_expected_code"`
+	MonitorURLPath        types.String      `tfsdk:"monitor_url_path"`
+	Listeners             types.List        `tfsdk:"listeners"`
+	Pools                 types.List        `tfsdk:"pools"`
+	PoolMembers           []PoolMemberInput `tfsdk:"pool_members"`
 }
 
 type PoolMemberInput struct {
@@ -195,6 +217,174 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				ElementType: types.ObjectType{AttrTypes: poolAttrTypes},
 				Description: "List of pools associated with the Load Balancer.",
 			},
+			"listener_name": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Name of the listener created with the Load Balancer. Defaults to <name>-listener.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"listener_protocol": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer, HTTP or HTTPS for an APPLICATION HTTP-HTTPS one. Defaults to HTTP.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("TCP", "UDP", "HTTP", "HTTPS"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"listener_port": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Port the listener accepts traffic on. Defaults to 80.",
+				Validators: []validator.Int64{
+					int64validator.Between(1, 65535),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"pool_name": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Name of the pool created with the Load Balancer. Defaults to <name>-pool.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"pool_algorithm": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "How traffic is spread across members. Defaults to ROUND_ROBIN.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("ROUND_ROBIN", "LEAST_CONNECTIONS", "SOURCE_IP"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"pool_session_persistence": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Pin a client to one member. NONE or SOURCE_IP. Defaults to NONE.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("NONE", "SOURCE_IP"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_name": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Name of the health monitor. Defaults to <name>-health.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_type": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Health check type. Must suit listener_protocol: UDP-CONNECT or PING for a UDP listener, TCP/PING/TLS-HELLO for TCP, and HTTP or HTTPS only for an HTTP-family listener. Defaults to the check that matches listener_protocol.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("HTTP", "HTTPS", "PING", "TCP", "TLS-HELLO", "UDP-CONNECT"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_delay": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Seconds between checks. Defaults to 5.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_timeout": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Seconds before a check times out. Defaults to 5.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_max_retries": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Successful checks before a member is put back in rotation. Defaults to 3.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_max_retries_down": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Failed checks before a member is taken out of rotation. Defaults to 3.",
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_http_method": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "HTTP method the check sends. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS", "PATCH", "TRACE", "CONNECT"),
+				},
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_expected_code": schema.Int64Attribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Status code that counts as healthy. Only used when monitor_type is HTTP or HTTPS. Defaults to 200.",
+				Validators: []validator.Int64{
+					int64validator.Between(100, 599),
+				},
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+					int64planmodifier.UseStateForUnknown(),
+				},
+			},
+			"monitor_url_path": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Path the check requests. Only used when monitor_type is HTTP or HTTPS. Defaults to /.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
 			"pool_members": schema.ListNestedAttribute{
 				Optional:    true,
 				Description: "Backend VMs to add as pool members at creation time. Changing this requires replacement.",
@@ -269,6 +459,63 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 	// Use snake_case vpc_id/customer_id so the API Gateway renames them
 	// to vpcId/customerId before forwarding to API. callAPI also converts the string
 	// values to integers. Sending camelCase directly causes SERVICE_ENDPOINT_BODY_INCORRECT.
+	// The console lets every one of these be chosen; the provider used to nail
+	// them to HTTP/80 round-robin, so a NETWORK TCP-UDP load balancer still got
+	// an HTTP listener. Unset falls back to the old values so existing configs
+	// keep the load balancer they already have.
+	listenerName := defaultStr(plan.ListenerName, plan.Name.ValueString()+"-listener")
+	listenerProtocol := defaultStr(plan.ListenerProtocol, "HTTP")
+	listenerPort := defaultInt(plan.ListenerPort, 80)
+	poolName := defaultStr(plan.PoolName, plan.Name.ValueString()+"-pool")
+	poolAlgorithm := defaultStr(plan.PoolAlgorithm, "ROUND_ROBIN")
+	poolSessionPersistence := defaultStr(plan.PoolSessionPersistence, "NONE")
+
+	plan.ListenerName = types.StringValue(listenerName)
+	plan.ListenerProtocol = types.StringValue(listenerProtocol)
+	plan.ListenerPort = types.Int64Value(listenerPort)
+	plan.PoolName = types.StringValue(poolName)
+	plan.PoolAlgorithm = types.StringValue(poolAlgorithm)
+	plan.PoolSessionPersistence = types.StringValue(poolSessionPersistence)
+
+	// The monitor has to speak a protocol the listener can carry; a UDP listener
+	// with the old hardcoded HTTP check is rejected outright with
+	// LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL. Default it from the
+	// listener rather than making every config spell it out.
+	monitorName := defaultStr(plan.MonitorName, plan.Name.ValueString()+"-health")
+	monitorType := defaultStr(plan.MonitorType, defaultMonitorType(listenerProtocol))
+	monitorDelay := defaultInt(plan.MonitorDelay, 5)
+	monitorTimeout := defaultInt(plan.MonitorTimeout, 5)
+	monitorMaxRetries := defaultInt(plan.MonitorMaxRetries, 3)
+	monitorMaxRetriesDown := defaultInt(plan.MonitorMaxRetriesDown, 3)
+	monitorHTTPMethod := defaultStr(plan.MonitorHTTPMethod, "GET")
+	monitorExpectedCode := defaultInt(plan.MonitorExpectedCode, 200)
+	monitorURLPath := defaultStr(plan.MonitorURLPath, "/")
+
+	monitor := map[string]interface{}{
+		"name":           monitorName,
+		"type":           monitorType,
+		"delay":          monitorDelay,
+		"timeout":        monitorTimeout,
+		"maxRetries":     monitorMaxRetries,
+		"maxRetriesDown": monitorMaxRetriesDown,
+	}
+	// httpMethod, expectedCode and urlPath only mean anything to an HTTP check.
+	if isHTTPMonitor(monitorType) {
+		monitor["httpMethod"] = monitorHTTPMethod
+		monitor["expectedCode"] = monitorExpectedCode
+		monitor["urlPath"] = monitorURLPath
+	}
+
+	plan.MonitorName = types.StringValue(monitorName)
+	plan.MonitorType = types.StringValue(monitorType)
+	plan.MonitorDelay = types.Int64Value(monitorDelay)
+	plan.MonitorTimeout = types.Int64Value(monitorTimeout)
+	plan.MonitorMaxRetries = types.Int64Value(monitorMaxRetries)
+	plan.MonitorMaxRetriesDown = types.Int64Value(monitorMaxRetriesDown)
+	plan.MonitorHTTPMethod = types.StringValue(monitorHTTPMethod)
+	plan.MonitorExpectedCode = types.Int64Value(monitorExpectedCode)
+	plan.MonitorURLPath = types.StringValue(monitorURLPath)
+
 	body := map[string]interface{}{
 		"vpc_id":      vpcID,
 		"customer_id": r.customerID,
@@ -284,31 +531,21 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 			"packageType":             plan.PackageType.ValueString(),
 		},
 		"listener": map[string]interface{}{
-			"name":            plan.Name.ValueString() + "-listener",
-			"protocol":        "HTTP",
-			"protocolPort":    80,
+			"name":            listenerName,
+			"protocol":        listenerProtocol,
+			"protocolPort":    listenerPort,
 			"xForwardedFor":   false,
 			"xForwardedPort":  false,
 			"xForwardedProto": false,
 		},
 		"pool": map[string]interface{}{
-			"name":                   plan.Name.ValueString() + "-pool",
-			"algorithm":              "ROUND_ROBIN",
-			"sessionPersistenceType": "NONE",
+			"name":                   poolName,
+			"algorithm":              poolAlgorithm,
+			"sessionPersistenceType": poolSessionPersistence,
 			"vpcId":                  parseInt(vpcID),
 		},
 		"members": members,
-		"monitor": map[string]interface{}{
-			"name":           plan.Name.ValueString() + "-health",
-			"type":           "HTTP",
-			"maxRetriesDown": 3,
-			"delay":          5,
-			"maxRetries":     3,
-			"timeout":        5,
-			"httpMethod":     "GET",
-			"expectedCode":   200,
-			"urlPath":        "/",
-		},
+		"monitor": monitor,
 	}
 
 	plan.VpcID = types.StringValue(vpcID)
@@ -890,4 +1127,79 @@ func getPackageTypeCode(s string) (int, error) {
 	default:
 		return 0, fmt.Errorf("invalid load balancer package type: %q. Supported types are: 'LB Compact', 'LB Small', 'LB Large', 'LB Quad Large', 'LB X-Large', 'LB Large HA', 'LB Compact HA', 'LB X Large HA', 'LB Quad Large HA', 'LB K8S Base'", s)
 	}
+}
+
+// defaultStr returns v, or fallback when the config left it out.
+func defaultStr(v types.String, fallback string) string {
+	if v.IsNull() || v.IsUnknown() || v.ValueString() == "" {
+		return fallback
+	}
+	return v.ValueString()
+}
+
+func defaultInt(v types.Int64, fallback int64) int64 {
+	if v.IsNull() || v.IsUnknown() {
+		return fallback
+	}
+	return v.ValueInt64()
+}
+
+// ValidateConfig rejects a listener protocol the load balancer type cannot
+// serve. The API takes the request either way and builds something unusable.
+func (r *LoadBalancerResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg LoadBalancerResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, cfg.ListenerProtocol)...)
+}
+
+// validateListenerProtocol is the rule on its own so it can be tested.
+func validateListenerProtocol(lbType, protocol types.String) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if protocol.IsNull() || protocol.IsUnknown() || lbType.IsNull() || lbType.IsUnknown() {
+		return diags
+	}
+	allowed := map[string][]string{
+		"NETWORK TCP-UDP":        {"TCP", "UDP"},
+		"APPLICATION HTTP-HTTPS": {"HTTP", "HTTPS"},
+	}
+	want, known := allowed[strings.ToUpper(lbType.ValueString())]
+	if !known {
+		return diags
+	}
+	got := strings.ToUpper(protocol.ValueString())
+	for _, ok := range want {
+		if got == ok {
+			return diags
+		}
+	}
+	diags.AddAttributeError(path.Root("listener_protocol"), "Protocol Not Supported By This Load Balancer",
+		fmt.Sprintf("loadbalancer_type %q serves %s; listener_protocol is %q.",
+			lbType.ValueString(), strings.Join(want, " or "), protocol.ValueString()))
+	return diags
+}
+
+// defaultMonitorType picks a check that plausibly suits the listener. The API
+// rejects some combinations with LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL
+// and the exact rule is not documented anywhere we can see, so this is only a
+// better starting point than the old hardcoded HTTP — set monitor_type
+// explicitly when the API disagrees.
+func defaultMonitorType(listenerProtocol string) string {
+	switch strings.ToUpper(listenerProtocol) {
+	case "UDP":
+		return "UDP-CONNECT"
+	case "TCP":
+		return "TCP"
+	case "HTTPS":
+		return "HTTPS"
+	default:
+		return "HTTP"
+	}
+}
+
+func isHTTPMonitor(monitorType string) bool {
+	t := strings.ToUpper(monitorType)
+	return t == "HTTP" || t == "HTTPS"
 }
