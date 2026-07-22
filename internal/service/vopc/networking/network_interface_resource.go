@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -432,4 +433,47 @@ func fillNicFromMap(data map[string]interface{}, m *NetworkInterfaceResourceMode
 		m.Description = types.StringNull()
 	}
 	m.Status = types.StringValue(asString(data, "status"))
+}
+
+// findNicInList fetches one NIC from nic/private/list. The nic/detail endpoint
+// returns a stub with no usable fields, so every code path that needs real NIC
+// state — read, attach polling, detach polling — goes through the list instead.
+// Returns nil when the NIC is not present.
+func findNicInList(ctx context.Context, c *client.Client, customerID, vpcID, nicID string) (map[string]interface{}, error) {
+	apiResp, diags := callAPI(ctx, c, pathNicList, map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	})
+	if diags.HasError() {
+		msg := "unknown error"
+		if errs := diags.Errors(); len(errs) > 0 {
+			msg = errs[0].Detail()
+		}
+		return nil, fmt.Errorf("list NICs: %s", msg)
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return nil, fmt.Errorf("decode NIC list: %w", err)
+	}
+	for _, raw := range items {
+		if asIDString(raw, "id") == nicID {
+			return raw, nil
+		}
+	}
+	return nil, nil
+}
+
+// nicAttachment reports whether the NIC is attached and to which instance,
+// from a nic/private/list entry.
+func nicAttachment(raw map[string]interface{}) (bool, string) {
+	if raw == nil {
+		return false, ""
+	}
+	attached := strings.EqualFold(asString(raw, "attachmentStatus"), "ATTACHED")
+	if asString(raw, "vttEntityType") != "virtual_machine" {
+		return attached, ""
+	}
+	return attached, asIDString(raw, "vttEntityValue")
 }

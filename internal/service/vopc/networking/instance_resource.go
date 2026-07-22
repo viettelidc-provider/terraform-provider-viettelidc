@@ -225,8 +225,11 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"key_pair_id": schema.StringAttribute{
-				Optional:    true,
-				Description: "Key pair ID to inject into the instance.",
+				Optional: true,
+				Computed: true,
+				Description: "Key pair ID to inject into the instance. " +
+					"Resolved from key_pair_name when omitted — the create endpoint needs the id, " +
+					"and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
@@ -258,6 +261,22 @@ func (r *InstanceResource) Create(ctx context.Context, req resource.CreateReques
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// The VM create endpoint needs the key pair's id, not just its name: given a
+	// name alone it tries to create a new key pair and fails with KEY_PAIR_EXISTED.
+	// Resolve the id so `key_pair_name` on its own works, as the docs show it.
+	if plan.KeyPairName.ValueString() != "" && plan.KeyPairID.ValueString() == "" {
+		kpID, err := r.lookupKeyPairID(ctx, plan.KeyPairName.ValueString(), vpcID)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot resolve key pair", err.Error())
+			return
+		}
+		plan.KeyPairID = types.StringValue(kpID)
+	}
+	// key_pair_id is Computed, so it must never be left unknown after apply.
+	if plan.KeyPairID.IsUnknown() {
+		plan.KeyPairID = types.StringNull()
 	}
 
 	body, diags := r.buildCreateBody(ctx, &plan, vpcID)
@@ -586,6 +605,9 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 		kp := map[string]interface{}{
 			"keypairName": v,
 		}
+		// Without an id the API reads keyPair as "create a new key pair with this
+		// name" and rejects the request with KEY_PAIR_EXISTED. The caller resolves
+		// the id from the name when the user did not supply one.
 		if kpID := m.KeyPairID.ValueString(); kpID != "" {
 			kpIDInt, _ := strconv.ParseInt(kpID, 10, 64)
 			kp["id"] = kpIDInt
@@ -660,8 +682,47 @@ func (r *InstanceResource) readInto(ctx context.Context, m *InstanceResourceMode
 	}
 	if err := mapVMResponse(ctx, apiResp, m); err != nil {
 		diags.AddError("Instance detail decode failed", err.Error())
+		return true
 	}
+	r.correctRootNic(ctx, m, vpcID)
 	return true
+}
+
+// correctRootNic overwrites root_nic_id / ip_address with the instance's real
+// primary interface. vm/detail lists NICs in an order that changes once another
+// NIC is attached, and its ipPrivate follows the same wrong entry, so the only
+// dependable source is the isRootNic flag on the NIC list. Best-effort: on any
+// lookup failure the values from vm/detail are left as they were.
+func (r *InstanceResource) correctRootNic(ctx context.Context, m *InstanceResourceModel, vpcID string) {
+	apiResp, diags := callAPI(ctx, r.client, pathNicList, map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": r.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	})
+	if diags.HasError() {
+		return
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return
+	}
+	vmID := m.ID.ValueString()
+	for _, raw := range items {
+		if asString(raw, "vttEntityType") != "virtual_machine" || asIDString(raw, "vttEntityValue") != vmID {
+			continue
+		}
+		if !asBool(raw, "isRootNic") {
+			continue
+		}
+		if id := asIDString(raw, "id"); id != "" {
+			m.RootNicID = types.StringValue(id)
+		}
+		if ip := asString(raw, "ipAddress"); ip != "" && ip != "default" {
+			m.IPAddress = types.StringValue(ip)
+		}
+		return
+	}
 }
 
 func extractVMID(resp *client.APIResponse) (string, error) {
@@ -728,6 +789,11 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 	if m.InstanceTypeID.IsUnknown() {
 		m.InstanceTypeID = types.Int64Null()
 	}
+	// Same for KeyPairID: the VM detail response does not carry it, and it is
+	// Computed, so an unknown here would fail the apply-consistency check.
+	if m.KeyPairID.IsUnknown() {
+		m.KeyPairID = types.StringNull()
+	}
 
 	// Extract image info.
 	if image, ok := data["image"].(map[string]interface{}); ok {
@@ -735,7 +801,11 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 		m.ImageName = types.StringValue(asString(image, "name"))
 	}
 
-	// Extract primary IP and root NIC ID from networks[0].
+	// Provisional primary IP / root NIC from networks[0]. Note that networks[] is
+	// NOT ordered root-first — attaching a second NIC pushes it ahead of the root
+	// NIC — so readInto corrects this afterwards using the isRootNic flag from the
+	// NIC list. This matters: root_nic_id is what the docs tell you to pass to a
+	// Floating IP association.
 	if networks, ok := data["networks"].([]interface{}); ok && len(networks) > 0 {
 		if net, ok := networks[0].(map[string]interface{}); ok {
 			m.IPAddress = types.StringValue(asString(net, "ipAddress"))
@@ -789,4 +859,35 @@ func (r *InstanceResource) lookupSGName(ctx context.Context, sgID string, vpcID 
 		}
 	}
 	return sgID
+}
+
+// lookupKeyPairID resolves a key pair name to its id. VM create needs the id;
+// with only a name the API tries to create a new key pair (KEY_PAIR_EXISTED).
+func (r *InstanceResource) lookupKeyPairID(ctx context.Context, name, vpcID string) (string, error) {
+	body := map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": r.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	}
+	apiResp, diags := callAPI(ctx, r.client, pathKeyPairList, body)
+	if diags.HasError() {
+		msg := "unknown error"
+		if errs := diags.Errors(); len(errs) > 0 {
+			msg = errs[0].Detail()
+		}
+		return "", fmt.Errorf("list key pairs: %s", msg)
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return "", fmt.Errorf("decode key pair list: %w", err)
+	}
+	for _, raw := range items {
+		if asString(raw, "keypairName") == name || asString(raw, "name") == name {
+			if id := asIDString(raw, "id"); id != "" {
+				return id, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no key pair named %q in VPC %s", name, vpcID)
 }

@@ -96,6 +96,18 @@ func (r *NetworkInterfaceAttachmentResource) Create(ctx context.Context, req res
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	// Attaching a NIC that is already on the target instance fails with a
+	// misleading ERROR_ATTACH_NIC_TO_VM_IN_THE_SAME_SUBNET, so check first and
+	// treat an existing attachment as success.
+	if raw, err := findNicInList(ctx, r.client, r.customerID, vpcID, plan.NetworkInterfaceID.ValueString()); err == nil && raw != nil {
+		if attached, attachedTo := nicAttachment(raw); attached && attachedTo == plan.InstanceID.ValueString() {
+			plan.VpcID = types.StringValue(vpcID)
+			plan.ID = types.StringValue(buildAttachmentID(plan.NetworkInterfaceID.ValueString(), plan.InstanceID.ValueString()))
+			resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+			return
+		}
+	}
+
 	body := map[string]interface{}{
 		"network_interface_id": plan.NetworkInterfaceID.ValueString(),
 		"instance_id":          plan.InstanceID.ValueString(),
@@ -107,25 +119,21 @@ func (r *NetworkInterfaceAttachmentResource) Create(ctx context.Context, req res
 		return
 	}
 
-	// Poll until the NIC detail endpoint confirms attachment to the expected instance.
+	// Poll the NIC list until it confirms attachment to the expected instance.
+	// nic/detail cannot be used here: it returns a stub with no attachment fields,
+	// so the poll never succeeded and every attach reported a false timeout while
+	// the NIC was in fact attached.
 	nicID := plan.NetworkInterfaceID.ValueString()
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		detailBody := map[string]interface{}{
-			"network_interface_id": nicID,
-			"vpc_id":               vpcID,
-			"customer_id":          r.customerID,
+		raw, err := findNicInList(ctx, r.client, r.customerID, vpcID, nicID)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot read NIC list", err.Error())
+			return
 		}
-		apiResp, pollDiags := callAPI(ctx, r.client, pathNicDetail, detailBody)
-		if pollDiags.HasError() {
-			if apiResp == nil || !isNotFoundMessage(apiResp.Message) {
-				// Hard error — not a transient not-found.
-				resp.Diagnostics.Append(pollDiags...)
-				return
-			}
-		} else if apiResp != nil {
-			attached, attachedTo, err := readAttachedInstance(apiResp)
-			if err == nil && attached && attachedTo == plan.InstanceID.ValueString() {
+		if raw != nil {
+			attached, attachedTo := nicAttachment(raw)
+			if attached && attachedTo == plan.InstanceID.ValueString() {
 				break
 			}
 		}
@@ -156,25 +164,16 @@ func (r *NetworkInterfaceAttachmentResource) Read(ctx context.Context, req resou
 		resp.Diagnostics.AddError("Invalid attachment id in state", err.Error())
 		return
 	}
-	body := map[string]interface{}{
-		"network_interface_id": nicID,
-		"vpc_id":               state.VpcID.ValueString(),
-		"customer_id":          r.customerID,
-	}
-	apiResp, diags := callAPI(ctx, r.client, pathNicDetail, body)
-	if diags.HasError() {
-		if apiResp != nil && isNotFoundMessage(apiResp.Message) {
-			resp.State.RemoveResource(ctx)
-			return
-		}
-		resp.Diagnostics.Append(diags...)
-		return
-	}
-	attached, attachedTo, err := readAttachedInstance(apiResp)
+	raw, err := findNicInList(ctx, r.client, r.customerID, state.VpcID.ValueString(), nicID)
 	if err != nil {
-		resp.Diagnostics.AddError("decode NIC detail", err.Error())
+		resp.Diagnostics.AddError("Cannot read NIC list", err.Error())
 		return
 	}
+	if raw == nil {
+		resp.State.RemoveResource(ctx)
+		return
+	}
+	attached, attachedTo := nicAttachment(raw)
 	if !attached || attachedTo != instanceID {
 		// Drift: NIC was detached or re-attached elsewhere.
 		resp.State.RemoveResource(ctx)
