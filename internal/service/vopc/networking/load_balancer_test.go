@@ -449,3 +449,34 @@ func TestLoadBalancerListenerPoolDefaults(t *testing.T) {
 		t.Errorf("set port should win, got %d", got)
 	}
 }
+
+// certificate_id and TERMINATED_HTTPS are a pair: the cert only terminates TLS,
+// and TERMINATED_HTTPS is the only protocol that presents one.
+func TestValidateCertificate(t *testing.T) {
+	t.Parallel()
+	str := types.StringValue
+	null := types.StringNull()
+	cases := []struct {
+		name     string
+		protocol types.String
+		cert     types.String
+		wantErr  bool
+	}{
+		{name: "terminated with cert", protocol: str("TERMINATED_HTTPS"), cert: str("abc"), wantErr: false},
+		{name: "terminated without cert", protocol: str("TERMINATED_HTTPS"), cert: null, wantErr: true},
+		{name: "http with cert", protocol: str("HTTP"), cert: str("abc"), wantErr: true},
+		{name: "http without cert", protocol: str("HTTP"), cert: null, wantErr: false},
+		{name: "tcp without cert", protocol: str("TCP"), cert: null, wantErr: false},
+		// cert from another resource is unknown at plan — cannot validate, must not error.
+		{name: "terminated with unknown cert", protocol: str("TERMINATED_HTTPS"), cert: types.StringUnknown(), wantErr: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := validateCertificate(tc.protocol, tc.cert).HasError(); got != tc.wantErr {
+				t.Fatalf("protocol=%s cert=%v: got error=%v want %v", tc.protocol, tc.cert, got, tc.wantErr)
+			}
+		})
+	}
+}

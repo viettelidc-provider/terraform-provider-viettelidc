@@ -64,6 +64,7 @@ type LoadBalancerResourceModel struct {
 	ListenerName           types.String `tfsdk:"listener_name"`
 	ListenerProtocol       types.String `tfsdk:"listener_protocol"`
 	ListenerPort           types.Int64  `tfsdk:"listener_port"`
+	CertificateID          types.String `tfsdk:"certificate_id"`
 	PoolName               types.String `tfsdk:"pool_name"`
 	PoolAlgorithm          types.String `tfsdk:"pool_algorithm"`
 	PoolSessionPersistence types.String `tfsdk:"pool_session_persistence"`
@@ -109,12 +110,10 @@ type PoolModel struct {
 
 func NewLoadBalancerResource() resource.Resource { return &LoadBalancerResource{} }
 
-func (r *LoadBalancerResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_ovpc_load_balancer"
-}
-
-func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
-	listenerAttrTypes := map[string]attr.Type{
+// listenerObjectTypes / poolObjectTypes are the element types of the computed
+// listeners / pools lists, shared by the schema and the error-path null lists.
+func listenerObjectTypes() map[string]attr.Type {
+	return map[string]attr.Type{
 		"id":                types.StringType,
 		"name":              types.StringType,
 		"description":       types.StringType,
@@ -124,14 +123,25 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 		"x_forwarded_port":  types.BoolType,
 		"x_forwarded_proto": types.BoolType,
 	}
+}
 
-	poolAttrTypes := map[string]attr.Type{
+func poolObjectTypes() map[string]attr.Type {
+	return map[string]attr.Type{
 		"id":                       types.StringType,
 		"name":                     types.StringType,
 		"description":              types.StringType,
 		"algorithm":                types.StringType,
 		"session_persistence_type": types.StringType,
 	}
+}
+
+func (r *LoadBalancerResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_ovpc_load_balancer"
+}
+
+func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+	listenerAttrTypes := listenerObjectTypes()
+	poolAttrTypes := poolObjectTypes()
 
 	resp.Schema = schema.Schema{
 		Description: "ViettelIDC Load Balancer for distributing traffic across multiple instances.",
@@ -149,7 +159,11 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 			},
 			"description": schema.StringAttribute{
 				Optional:    true,
-				Description: "Description of the Load Balancer.",
+				Computed:    true,
+				Description: "Description of the Load Balancer. The API stores an empty string when unset.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"subnet_id": schema.StringAttribute{
 				Required:    true,
@@ -228,15 +242,25 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"listener_protocol": schema.StringAttribute{
-				Optional:    true,
-				Computed:    true,
-				Description: "Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer, HTTP or HTTPS for an APPLICATION HTTP-HTTPS one. Defaults to HTTP.",
+				Optional: true,
+				Computed: true,
+				Description: "Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer; " +
+					"HTTP, HTTPS or TERMINATED_HTTPS for an APPLICATION HTTP-HTTPS one. Use TERMINATED_HTTPS " +
+					"together with certificate_id to terminate TLS at the load balancer. Defaults to HTTP.",
 				Validators: []validator.String{
-					stringvalidator.OneOf("TCP", "UDP", "HTTP", "HTTPS"),
+					stringvalidator.OneOf("TCP", "UDP", "HTTP", "HTTPS", "TERMINATED_HTTPS"),
 				},
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"certificate_id": schema.StringAttribute{
+				Optional: true,
+				Description: "Certificate to terminate TLS with, from viettelidc_ovpc_certificate. " +
+					"Required when listener_protocol is TERMINATED_HTTPS and only valid then. Immutable.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"listener_port": schema.Int64Attribute{
@@ -478,6 +502,21 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 	plan.PoolAlgorithm = types.StringValue(poolAlgorithm)
 	plan.PoolSessionPersistence = types.StringValue(poolSessionPersistence)
 
+	listenerBody := map[string]interface{}{
+		"name":            listenerName,
+		"protocol":        listenerProtocol,
+		"protocolPort":    listenerPort,
+		"xForwardedFor":   false,
+		"xForwardedPort":  false,
+		"xForwardedProto": false,
+	}
+	// TERMINATED_HTTPS terminates TLS at the load balancer, which needs the cert
+	// to present. This is the create-time attachment the console does through
+	// compound-create; changing a live listener's protocol is a separate flow.
+	if v := plan.CertificateID.ValueString(); v != "" {
+		listenerBody["defaultCertificateId"] = v
+	}
+
 	// The monitor has to speak a protocol the listener can carry; a UDP listener
 	// with the old hardcoded HTTP check is rejected outright with
 	// LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL. Default it from the
@@ -531,14 +570,7 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 			"lbType":                  plan.LoadBalancerType.ValueString(),
 			"packageType":             plan.PackageType.ValueString(),
 		},
-		"listener": map[string]interface{}{
-			"name":            listenerName,
-			"protocol":        listenerProtocol,
-			"protocolPort":    listenerPort,
-			"xForwardedFor":   false,
-			"xForwardedPort":  false,
-			"xForwardedProto": false,
-		},
+		"listener": listenerBody,
 		"pool": map[string]interface{}{
 			"name":                   poolName,
 			"algorithm":              poolAlgorithm,
@@ -840,11 +872,22 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 		return
 	}
 
-	// If the load balancer is in a terminal error state, record the status
-	// and return without populating other fields. This allows terraform destroy
-	// to proceed — Delete() will call the delete API regardless of status.
+	// If the load balancer is in a terminal error state, record the status and
+	// stop — Delete() runs regardless of status. Every computed attribute still
+	// has to be a known value or the create fails with "invalid result object",
+	// so fill the read-only fields with knowns rather than leaving them unknown.
 	if st := strings.ToUpper(detailResp.Status); st == "ERROR" || st == "FAILED" {
 		model.Status = types.StringValue(detailResp.Status)
+		model.IPAddress = types.StringValue(detailResp.IPAddress)
+		model.OperatingStatus = types.StringValue(detailResp.OperatingStatus)
+		model.ProvisioningStatus = types.StringValue(detailResp.ProvisioningStatus)
+		model.IsPublicLoadBalancer = types.BoolValue(detailResp.IsPublicLoadbalancer)
+		if model.Listeners.IsUnknown() {
+			model.Listeners = types.ListNull(types.ObjectType{AttrTypes: listenerObjectTypes()})
+		}
+		if model.Pools.IsUnknown() {
+			model.Pools = types.ListNull(types.ObjectType{AttrTypes: poolObjectTypes()})
+		}
 		return
 	}
 
@@ -1162,6 +1205,32 @@ func (r *LoadBalancerResource) ValidateConfig(ctx context.Context, req resource.
 		return
 	}
 	resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, cfg.ListenerProtocol)...)
+	resp.Diagnostics.Append(validateCertificate(cfg.ListenerProtocol, cfg.CertificateID)...)
+}
+
+// validateCertificate ties certificate_id to a TERMINATED_HTTPS listener: the
+// cert is only used to terminate TLS, and that protocol is the only one that
+// does. Both directions matter — a TERMINATED_HTTPS listener with no cert has
+// nothing to present.
+func validateCertificate(protocol, certID types.String) diag.Diagnostics {
+	var diags diag.Diagnostics
+	// A cert sourced from another resource is unknown at plan time; we cannot
+	// tell whether it is set, so leave the pairing for apply to enforce.
+	if protocol.IsUnknown() || certID.IsUnknown() {
+		return diags
+	}
+	term := !protocol.IsNull() && strings.EqualFold(protocol.ValueString(), "TERMINATED_HTTPS")
+	hasCert := !certID.IsNull() && certID.ValueString() != ""
+
+	if term && !hasCert {
+		diags.AddAttributeError(path.Root("certificate_id"), "Certificate Required",
+			"listener_protocol is TERMINATED_HTTPS; set certificate_id to the cert to terminate TLS with.")
+	}
+	if hasCert && !term {
+		diags.AddAttributeError(path.Root("certificate_id"), "Certificate Not Used",
+			"certificate_id only applies when listener_protocol is TERMINATED_HTTPS.")
+	}
+	return diags
 }
 
 // validateListenerProtocol is the rule on its own so it can be tested.
@@ -1172,7 +1241,7 @@ func validateListenerProtocol(lbType, protocol types.String) diag.Diagnostics {
 	}
 	allowed := map[string][]string{
 		"NETWORK TCP-UDP":        {"TCP", "UDP"},
-		"APPLICATION HTTP-HTTPS": {"HTTP", "HTTPS"},
+		"APPLICATION HTTP-HTTPS": {"HTTP", "HTTPS", "TERMINATED_HTTPS"},
 	}
 	want, known := allowed[strings.ToUpper(lbType.ValueString())]
 	if !known {

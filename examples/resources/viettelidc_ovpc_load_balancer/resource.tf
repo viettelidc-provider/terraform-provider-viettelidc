@@ -43,3 +43,23 @@ resource "viettelidc_ovpc_load_balancer" "tcp" {
   monitor_type  = "PING"
   monitor_delay = 10
 }
+
+# 3. HTTPS with TLS terminated at the load balancer. The listener protocol must
+# be TERMINATED_HTTPS and certificate_id points at a viettelidc_ovpc_certificate.
+resource "viettelidc_ovpc_load_balancer" "https" {
+  name              = "web-https"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "APPLICATION HTTP-HTTPS"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  listener_protocol = "TERMINATED_HTTPS"
+  listener_port     = 443
+  certificate_id    = viettelidc_ovpc_certificate.web_cert.id
+
+  pool_members = [{
+    vm_id  = viettelidc_ovpc_instance.vm1.id
+    port   = 443
+    weight = 1
+  }]
+}
