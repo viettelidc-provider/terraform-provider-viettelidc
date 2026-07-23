@@ -73,7 +73,7 @@ resource "viettelidc_ovpc_load_balancer" "tcp" {
 
 - `admin_state_up` (Boolean) Administrative state of the Load Balancer.
 - `description` (String) Description of the Load Balancer.
-- `floating_ip_id` (String) ID of the floating IP to assign to the Load Balancer.
+- `floating_ip_id` (String) ID of the floating IP to assign to the Load Balancer. Read back from the detail endpoint so removing it out-of-band shows as drift.
 - `listener_name` (String) Name of the listener created with the Load Balancer. Defaults to <name>-listener.
 - `listener_port` (Number) Port the listener accepts traffic on. Defaults to 80.
 - `listener_protocol` (String) Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer, HTTP or HTTPS for an APPLICATION HTTP-HTTPS one. Defaults to HTTP.

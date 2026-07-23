@@ -159,8 +159,9 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 			"floating_ip_id": schema.StringAttribute{
-				Optional:    true,
-				Description: "ID of the floating IP to assign to the Load Balancer.",
+				Optional: true,
+				Description: "ID of the floating IP to assign to the Load Balancer. Read back from " +
+					"the detail endpoint so removing it out-of-band shows as drift.",
 			},
 			"loadbalancer_type": schema.StringAttribute{
 				Required:    true,
@@ -827,6 +828,11 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 		IPAddress            string `json:"ipAddress"`
 		ProvisioningStatus   string `json:"provisioningStatus"`
 		IsPublicLoadbalancer bool   `json:"isPublicLoadbalancer"`
+		// vttFloatingId is the key compound-create sends for the assigned
+		// floating IP; the detail endpoint omits it when none is attached. No
+		// captured LB carried one, so this is the create key read back rather
+		// than a field confirmed against a FIP-bearing LB.
+		VttFloatingID *int64 `json:"vttFloatingId"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &detailResp); err != nil {
@@ -848,6 +854,9 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 	model.IPAddress = types.StringValue(detailResp.IPAddress)
 	model.ProvisioningStatus = types.StringValue(detailResp.ProvisioningStatus)
 	model.IsPublicLoadBalancer = types.BoolValue(detailResp.IsPublicLoadbalancer)
+	if detailResp.VttFloatingID != nil && *detailResp.VttFloatingID != 0 {
+		model.FloatingIPID = types.StringValue(fmt.Sprintf("%d", *detailResp.VttFloatingID))
+	}
 	model.LoadBalancerType = types.StringValue(detailResp.LoadBalancerType)
 	// Preserve the user-configured PackageType if the API maps to the same lb type code.
 	// API normalizes "LB Small" → "LB Compact" (both map to lbTypeCode=1).
