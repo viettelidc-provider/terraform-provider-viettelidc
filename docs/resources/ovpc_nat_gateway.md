@@ -23,8 +23,8 @@ resource "viettelidc_ovpc_nat_gateway" "nat" {
   # what gives that subnet outbound internet. A public subnet is rejected.
   subnet_id           = viettelidc_ovpc_subnet.private.id
   internet_gateway_id = data.viettelidc_ovpc_internet_gateway.igw.id
-  connect_type        = false
-  vpc_id              = data.viettelidc_ovpc_vpc.main.id
+  # connect_type is computed (always true) — do not set it.
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
