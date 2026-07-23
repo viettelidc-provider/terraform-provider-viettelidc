@@ -43,12 +43,14 @@ type VMTemplatesDataSourceModel struct {
 
 // VMTemplateItem represents one OS/flavor template returned by the API.
 type VMTemplateItem struct {
-	ID          types.String `tfsdk:"id"`
-	Name        types.String `tfsdk:"name"`
-	Description types.String `tfsdk:"description"`
-	OsType      types.String `tfsdk:"os_type"`
-	CPU         types.Int64  `tfsdk:"cpu"`
-	Memory      types.Int64  `tfsdk:"memory"`
+	ID                  types.String `tfsdk:"id"`
+	Name                types.String `tfsdk:"name"`
+	Description         types.String `tfsdk:"description"`
+	OsType              types.String `tfsdk:"os_type"`
+	CPU                 types.Int64  `tfsdk:"cpu"`
+	Memory              types.Int64  `tfsdk:"memory"`
+	SSHKeyEnabled       types.Bool   `tfsdk:"ssh_key_enabled"`
+	DefaultRootUsername types.String `tfsdk:"default_root_username"`
 }
 
 // NewVMTemplatesDataSource constructs the data source.
@@ -91,6 +93,17 @@ func (d *VMTemplatesDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 						"os_type":     schema.StringAttribute{Computed: true, Description: "OS type (e.g. Linux, Windows)."},
 						"cpu":         schema.Int64Attribute{Computed: true, Description: "Number of vCPUs."},
 						"memory":      schema.Int64Attribute{Computed: true, Description: "Memory in MB."},
+						"ssh_key_enabled": schema.BoolAttribute{
+							Computed: true,
+							Description: "Whether the template accepts an SSH key pair. When false, key_pair_name / " +
+								"key_pair_id on viettelidc_ovpc_instance have no effect — the template ships with a " +
+								"fixed login and you must use admin_pass. Many appliance images (GitLab, Jenkins, ...) " +
+								"are false.",
+						},
+						"default_root_username": schema.StringAttribute{
+							Computed:    true,
+							Description: "Login the template creates, e.g. \"root\". Empty when the template does not report one.",
+						},
 					},
 				},
 			},
@@ -175,12 +188,14 @@ func (d *VMTemplatesDataSource) Read(ctx context.Context, req datasource.ReadReq
 			id = asIDString(raw, "templateId")
 		}
 		cfg.Templates = append(cfg.Templates, VMTemplateItem{
-			ID:          types.StringValue(id),
-			Name:        types.StringValue(asString(raw, "name")),
-			Description: types.StringValue(asString(raw, "description")),
-			OsType:      types.StringValue(asString(raw, "osType")),
-			CPU:         types.Int64Value(asInt64(raw, "cpu")),
-			Memory:      types.Int64Value(asInt64(raw, "memory")),
+			ID:                  types.StringValue(id),
+			Name:                types.StringValue(asString(raw, "name")),
+			Description:         types.StringValue(asString(raw, "description")),
+			OsType:              types.StringValue(asString(raw, "osType")),
+			CPU:                 types.Int64Value(asInt64(raw, "cpu")),
+			Memory:              types.Int64Value(asInt64(raw, "memory")),
+			SSHKeyEnabled:       types.BoolValue(asBool(raw, "sshKeyEnabled")),
+			DefaultRootUsername: types.StringValue(asString(raw, "defaultRootUsername")),
 		})
 	}
 

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -20,7 +21,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
@@ -217,8 +217,11 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"key_pair_name": schema.StringAttribute{
-				Optional:    true,
-				Description: "Key pair name to inject into the instance.",
+				Optional: true,
+				Description: "Key pair name to inject into the instance. Only works when the template " +
+					"reports ssh_key_enabled = true (see viettelidc_ovpc_vm_templates); on a template " +
+					"with ssh_key_enabled = false it is ignored and the instance takes a fixed login, so " +
+					"set admin_pass instead.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
@@ -843,13 +846,13 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 // If the API call fails or the name cannot be found, it falls back to returning the sgID.
 func (r *InstanceResource) lookupSGName(ctx context.Context, sgID string, vpcID string) string {
 	sgIDInt, _ := strconv.ParseInt(sgID, 10, 64)
-	
+
 	body := map[string]interface{}{
 		"security_group_id": sgIDInt,
 		"vpc_id":            vpcID,
 		"customer_id":       r.customerID,
 	}
-	
+
 	if apiResp, d := callAPI(ctx, r.client, pathSGDetail, body); !d.HasError() && apiResp != nil {
 		var raw map[string]interface{}
 		if err := json.Unmarshal(apiResp.Data, &raw); err == nil {
