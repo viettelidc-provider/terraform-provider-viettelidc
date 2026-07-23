@@ -25,11 +25,18 @@ type CertificateDataSource struct {
 
 // CertificateDataSourceModel is the Terraform state for a certificate data source.
 type CertificateDataSourceModel struct {
-	ID        types.String `tfsdk:"id"`
-	Name      types.String `tfsdk:"name"`
-	VpcID     types.String `tfsdk:"vpc_id"`
-	Status    types.String `tfsdk:"status"`
-	CreatedAt types.String `tfsdk:"created_at"`
+	ID            types.String        `tfsdk:"id"`
+	Name          types.String        `tfsdk:"name"`
+	VpcID         types.String        `tfsdk:"vpc_id"`
+	Status        types.String        `tfsdk:"status"`
+	CreatedAt     types.String        `tfsdk:"created_at"`
+	LoadBalancers []certLBBindingItem `tfsdk:"load_balancers"`
+}
+
+// certLBBindingItem exposes one load balancer using the certificate.
+type certLBBindingItem struct {
+	ID   types.String `tfsdk:"id"`
+	Name types.String `tfsdk:"name"`
 }
 
 func NewCertificateDataSource() datasource.DataSource { return &CertificateDataSource{} }
@@ -64,6 +71,16 @@ func (d *CertificateDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 			"created_at": schema.StringAttribute{
 				Computed:    true,
 				Description: "Creation timestamp (ISO-8601).",
+			},
+			"load_balancers": schema.ListNestedAttribute{
+				Computed:    true,
+				Description: "Load balancers currently using this certificate. A certificate in use cannot be deleted.",
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"id":   schema.StringAttribute{Computed: true, Description: "Load balancer ID."},
+						"name": schema.StringAttribute{Computed: true, Description: "Load balancer name."},
+					},
+				},
 			},
 		},
 	}
@@ -141,6 +158,13 @@ func (d *CertificateDataSource) Read(ctx context.Context, req datasource.ReadReq
 	state.VpcID = types.StringValue(vpcID)
 	state.Status = types.StringValue(found.Status)
 	state.CreatedAt = types.StringValue(found.CreatedAt)
+	state.LoadBalancers = make([]certLBBindingItem, 0, len(found.LoadBalancers))
+	for _, lb := range found.LoadBalancers {
+		state.LoadBalancers = append(state.LoadBalancers, certLBBindingItem{
+			ID:   types.StringValue(fmt.Sprintf("%d", lb.ID)),
+			Name: types.StringValue(lb.Name),
+		})
+	}
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
