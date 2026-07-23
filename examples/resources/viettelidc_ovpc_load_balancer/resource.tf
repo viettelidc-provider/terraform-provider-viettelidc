@@ -63,3 +63,34 @@ resource "viettelidc_ovpc_load_balancer" "https" {
     weight = 1
   }]
 }
+
+# 4. Attach an extra TLS-terminating listener to a load balancer after the fact.
+# Each additional_listener block is its own listener + pool + members + monitor,
+# created through the same compound-create the console uses for its "attach
+# certificate" flow. Removing a block deletes that listener, its pool (and the
+# pool's members) and its monitor — the primary listener stays.
+resource "viettelidc_ovpc_load_balancer" "multi" {
+  name              = "web-multi"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "APPLICATION HTTP-HTTPS"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  # primary listener: plain HTTP
+  listener_protocol = "HTTP"
+  listener_port     = 80
+  pool_members = [{ vm_id = viettelidc_ovpc_instance.vm1.id, port = 80, weight = 1 }]
+
+  # added listener: HTTPS terminated at the LB with a certificate
+  additional_listener {
+    protocol       = "TERMINATED_HTTPS"
+    port           = 443
+    certificate_id = viettelidc_ovpc_certificate.web_cert.id
+
+    pool_members {
+      vm_id  = viettelidc_ovpc_instance.vm1.id
+      port   = 443
+      weight = 1
+    }
+  }
+}

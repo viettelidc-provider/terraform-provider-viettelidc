@@ -81,6 +81,29 @@ type LoadBalancerResourceModel struct {
 	Listeners             types.List        `tfsdk:"listeners"`
 	Pools                 types.List        `tfsdk:"pools"`
 	PoolMembers           []PoolMemberInput `tfsdk:"pool_members"`
+
+	AdditionalListeners []AdditionalListenerModel `tfsdk:"additional_listener"`
+}
+
+// AdditionalListenerModel is one extra listener added to the load balancer after
+// it exists. The API builds it through the same compound-create call as the
+// primary listener, but with vttLoadBalancerId set and no loadBalancer object —
+// which is how the console attaches a TLS-terminating listener with a cert to a
+// running load balancer.
+type AdditionalListenerModel struct {
+	Protocol      types.String `tfsdk:"protocol"`
+	Port          types.Int64  `tfsdk:"port"`
+	CertificateID types.String `tfsdk:"certificate_id"`
+
+	PoolAlgorithm          types.String      `tfsdk:"pool_algorithm"`
+	PoolSessionPersistence types.String      `tfsdk:"pool_session_persistence"`
+	PoolMembers            []PoolMemberInput `tfsdk:"pool_members"`
+	MonitorType            types.String      `tfsdk:"monitor_type"`
+
+	// Computed ids, needed to delete the listener, its pool and its monitor.
+	ID        types.String `tfsdk:"id"`
+	PoolID    types.String `tfsdk:"pool_id"`
+	MonitorID types.String `tfsdk:"monitor_id"`
 }
 
 type PoolMemberInput struct {
@@ -438,6 +461,72 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				},
 			},
 		},
+		Blocks: map[string]schema.Block{
+			"additional_listener": schema.ListNestedBlock{
+				Description: "Extra listeners added to the load balancer after it is created — this is " +
+					"how a TLS-terminating (TERMINATED_HTTPS) listener with a certificate is attached to " +
+					"a running load balancer, the same way the console's \"attach certificate\" flow does. " +
+					"Each block is its own listener with its own pool, members and health monitor.",
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"protocol": schema.StringAttribute{
+							Required: true,
+							Description: "Listener protocol: TCP, UDP, HTTP, HTTPS or TERMINATED_HTTPS. Use " +
+								"TERMINATED_HTTPS with certificate_id to terminate TLS.",
+							Validators: []validator.String{
+								stringvalidator.OneOf("TCP", "UDP", "HTTP", "HTTPS", "TERMINATED_HTTPS"),
+							},
+						},
+						"port": schema.Int64Attribute{
+							Required:    true,
+							Description: "Port the listener accepts traffic on.",
+							Validators:  []validator.Int64{int64validator.Between(1, 65535)},
+						},
+						"certificate_id": schema.StringAttribute{
+							Optional:    true,
+							Description: "Certificate to terminate TLS with. Required when protocol is TERMINATED_HTTPS.",
+						},
+						"pool_algorithm": schema.StringAttribute{
+							Optional:    true,
+							Computed:    true,
+							Description: "ROUND_ROBIN, LEAST_CONNECTIONS or SOURCE_IP. Defaults to ROUND_ROBIN.",
+							Validators: []validator.String{
+								stringvalidator.OneOf("ROUND_ROBIN", "LEAST_CONNECTIONS", "SOURCE_IP"),
+							},
+						},
+						"pool_session_persistence": schema.StringAttribute{
+							Optional:    true,
+							Computed:    true,
+							Description: "NONE or SOURCE_IP. Defaults to NONE.",
+							Validators:  []validator.String{stringvalidator.OneOf("NONE", "SOURCE_IP")},
+						},
+						"monitor_type": schema.StringAttribute{
+							Optional:    true,
+							Computed:    true,
+							Description: "Health check type. Defaults to a check derived from protocol.",
+							Validators: []validator.String{
+								stringvalidator.OneOf("HTTP", "HTTPS", "PING", "TCP", "TLS-HELLO", "UDP-CONNECT"),
+							},
+						},
+						"id":         schema.StringAttribute{Computed: true, Description: "Listener ID."},
+						"pool_id":    schema.StringAttribute{Computed: true, Description: "Pool ID of this listener."},
+						"monitor_id": schema.StringAttribute{Computed: true, Description: "Health monitor ID of this listener."},
+					},
+					Blocks: map[string]schema.Block{
+						"pool_members": schema.ListNestedBlock{
+							Description: "Backend VMs for this listener's pool.",
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"vm_id":  schema.StringAttribute{Required: true, Description: "VM ID to add as a pool member."},
+									"port":   schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(80), Description: "Port on the VM (default 80)."},
+									"weight": schema.Int64Attribute{Optional: true, Computed: true, Default: int64default.StaticInt64(1), Description: "Weight (default 1)."},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -736,13 +825,81 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		}
 	}
 
+	// Add any extra listeners now that the load balancer exists.
+	for i := range plan.AdditionalListeners {
+		r.createAdditionalListener(ctx, plan.ID.ValueString(), vpcID, &plan.AdditionalListeners[i], &resp.Diagnostics)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	// Fetch details to get computed fields
 	r.readAndMerge(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	r.readAdditionalListeners(ctx, &plan, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
+}
+
+// createAdditionalListener adds one listener (with its pool, members and
+// monitor) to an existing load balancer via compound-create — the same call
+// that creates a load balancer, minus the loadBalancer object and with
+// vttLoadBalancerId set. It then resolves the ids needed to delete it later.
+func (r *LoadBalancerResource) createAdditionalListener(ctx context.Context, lbID, vpcID string, l *AdditionalListenerModel, diags *diag.Diagnostics) {
+	protocol := l.Protocol.ValueString()
+	poolAlgorithm := defaultStr(l.PoolAlgorithm, "ROUND_ROBIN")
+	poolSession := defaultStr(l.PoolSessionPersistence, "NONE")
+	monitorType := defaultStr(l.MonitorType, defaultMonitorType(protocol))
+	name := fmt.Sprintf("%s-%d", protocol, l.Port.ValueInt64())
+
+	members := r.buildMembers(ctx, l.PoolMembers, vpcID, diags)
+	if diags.HasError() {
+		return
+	}
+
+	listenerBody := map[string]interface{}{
+		"name":              name,
+		"protocol":          protocol,
+		"protocolPort":      l.Port.ValueInt64(),
+		"xForwardedFor":     false,
+		"xForwardedPort":    false,
+		"xForwardedProto":   false,
+		"vttLoadBalancerId": lbID,
+	}
+	if v := l.CertificateID.ValueString(); v != "" {
+		listenerBody["defaultCertificateId"] = v
+	}
+	monitor := map[string]interface{}{
+		"name": name, "type": monitorType, "delay": 5, "timeout": 5,
+		"maxRetries": 3, "maxRetriesDown": 3,
+	}
+	if isHTTPMonitor(monitorType) {
+		monitor["httpMethod"] = "GET"
+		monitor["expectedCode"] = 200
+		monitor["urlPath"] = "/"
+	}
+	body := map[string]interface{}{
+		"listener": listenerBody,
+		"pool": map[string]interface{}{
+			"name": name, "algorithm": poolAlgorithm,
+			"sessionPersistenceType": poolSession, "vpcId": parseInt(vpcID),
+		},
+		"members":     members,
+		"monitor":     monitor,
+		"vpc_id":      vpcID,
+		"customer_id": r.customerID,
+	}
+	if _, d := callAPIRetryBusy(ctx, r.client, pathLoadBalancerCreate, body, asyncOpTimeout); d.HasError() {
+		diags.Append(d...)
+		return
+	}
+
+	l.Protocol = types.StringValue(protocol)
+	l.PoolAlgorithm = types.StringValue(poolAlgorithm)
+	l.PoolSessionPersistence = types.StringValue(poolSession)
+	l.MonitorType = types.StringValue(monitorType)
 }
 
 func (r *LoadBalancerResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -756,13 +913,43 @@ func (r *LoadBalancerResource) Read(ctx context.Context, req resource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	r.readAdditionalListeners(ctx, &state, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, state)...)
 }
 
 func (r *LoadBalancerResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan LoadBalancerResourceModel
+	var plan, state LoadBalancerResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	// Reconcile additional listeners: an additional listener is identified by
+	// protocol+port. Ones in the plan but not the prior state are added, ones
+	// gone from the plan are deleted (monitor, then pool, then listener).
+	key := func(l AdditionalListenerModel) string {
+		return strings.ToUpper(l.Protocol.ValueString()) + ":" + fmt.Sprintf("%d", l.Port.ValueInt64())
+	}
+	planKeys := map[string]bool{}
+	for _, l := range plan.AdditionalListeners {
+		planKeys[key(l)] = true
+	}
+	stateByKey := map[string]AdditionalListenerModel{}
+	for _, l := range state.AdditionalListeners {
+		stateByKey[key(l)] = l
+	}
+	for _, l := range state.AdditionalListeners {
+		if !planKeys[key(l)] {
+			r.deleteAdditionalListener(ctx, plan.VpcID.ValueString(), l, &resp.Diagnostics)
+		}
+	}
+	for i := range plan.AdditionalListeners {
+		if _, existed := stateByKey[key(plan.AdditionalListeners[i])]; !existed {
+			r.createAdditionalListener(ctx, plan.ID.ValueString(), plan.VpcID.ValueString(), &plan.AdditionalListeners[i], &resp.Diagnostics)
+		}
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -786,6 +973,7 @@ func (r *LoadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	r.readAdditionalListeners(ctx, &plan, &resp.Diagnostics)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, plan)...)
 }
@@ -1206,6 +1394,10 @@ func (r *LoadBalancerResource) ValidateConfig(ctx context.Context, req resource.
 	}
 	resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, cfg.ListenerProtocol)...)
 	resp.Diagnostics.Append(validateCertificate(cfg.ListenerProtocol, cfg.CertificateID)...)
+	for _, l := range cfg.AdditionalListeners {
+		resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, l.Protocol)...)
+		resp.Diagnostics.Append(validateCertificate(l.Protocol, l.CertificateID)...)
+	}
 }
 
 // validateCertificate ties certificate_id to a TERMINATED_HTTPS listener: the
@@ -1280,4 +1472,104 @@ func defaultMonitorType(listenerProtocol string) string {
 func isHTTPMonitor(monitorType string) bool {
 	t := strings.ToUpper(monitorType)
 	return t == "HTTP" || t == "HTTPS"
+}
+
+// readAdditionalListeners resolves the id, pool_id and monitor_id of each
+// additional listener by correlating the three list endpoints:
+// a listener is matched by protocol+port (unique on a load balancer), its pool
+// by vttLoadBalancerListenerId, and its monitor by vttLoadBalancerPoolId.
+func (r *LoadBalancerResource) readAdditionalListeners(ctx context.Context, m *LoadBalancerResourceModel, diags *diag.Diagnostics) {
+	if len(m.AdditionalListeners) == 0 {
+		return
+	}
+	body := map[string]interface{}{
+		"vpc_id": m.VpcID.ValueString(), "customer_id": r.customerID,
+		"vttLoadBalancerId": parseInt(m.ID.ValueString()),
+	}
+
+	lResp, d := callAPI(ctx, r.client, pathLoadBalancerListeners, body)
+	diags.Append(d...)
+	pResp, d := callAPI(ctx, r.client, pathLoadBalancerPools, body)
+	diags.Append(d...)
+	mResp, d := callAPI(ctx, r.client, pathLoadBalancerMonitors, body)
+	diags.Append(d...)
+	if diags.HasError() {
+		return
+	}
+
+	var listeners []struct {
+		ID           string `json:"id"`
+		Protocol     string `json:"protocol"`
+		ProtocolPort int64  `json:"protocolPort"`
+	}
+	var pools []struct {
+		ID         string `json:"id"`
+		ListenerID int64  `json:"vttLoadBalancerListenerId"`
+	}
+	var monitors []struct {
+		ID     string `json:"id"`
+		PoolID int64  `json:"vttLoadBalancerPoolId"`
+	}
+	_ = json.Unmarshal(lResp.Data, &listeners)
+	_ = json.Unmarshal(pResp.Data, &pools)
+	_ = json.Unmarshal(mResp.Data, &monitors)
+
+	for i := range m.AdditionalListeners {
+		l := &m.AdditionalListeners[i]
+		var listenerID string
+		for _, x := range listeners {
+			if strings.EqualFold(x.Protocol, l.Protocol.ValueString()) && x.ProtocolPort == l.Port.ValueInt64() {
+				listenerID = x.ID
+				break
+			}
+		}
+		l.ID = types.StringValue(listenerID)
+
+		var poolID string
+		for _, p := range pools {
+			if fmt.Sprintf("%d", p.ListenerID) == listenerID {
+				poolID = p.ID
+				break
+			}
+		}
+		l.PoolID = types.StringValue(poolID)
+
+		var monitorID string
+		for _, mo := range monitors {
+			if fmt.Sprintf("%d", mo.PoolID) == poolID {
+				monitorID = mo.ID
+				break
+			}
+		}
+		l.MonitorID = types.StringValue(monitorID)
+	}
+}
+
+// deleteAdditionalListener removes a listener and everything created with it:
+// the monitor and the pool (which cascades its members), then the listener.
+func (r *LoadBalancerResource) deleteAdditionalListener(ctx context.Context, vpcID string, l AdditionalListenerModel, diags *diag.Diagnostics) {
+	del := func(path, key, id string) {
+		if id == "" {
+			return
+		}
+		body := map[string]interface{}{key: id, "vpc_id": vpcID, "customer_id": r.customerID}
+		apiResp, d := callAPIRetryBusy(ctx, r.client, path, body, asyncOpTimeout)
+		if d.HasError() {
+			// pool/delete cascades the pool's members and its monitor, so by the
+			// time monitor/delete runs the monitor is already gone. Treat a
+			// not-found as success rather than failing the whole reconcile.
+			if apiResp != nil && isNotFoundMessage(apiResp.Message) {
+				return
+			}
+			diags.Append(d...)
+		}
+	}
+	// Order matters and is top-down: the listener references the pool and the
+	// pool the monitor, so each must go before the thing it points at is gone.
+	// Deleting the monitor or pool while the listener still references them
+	// returns success without actually removing them — that is how a reversed
+	// order leaves orphans behind.
+	del(pathLoadBalancerListenerDelete, "vttLoadBalancerListenerId", l.ID.ValueString())
+	del(pathLoadBalancerPoolDelete, "vttLoadBalancerPoolId", l.PoolID.ValueString())
+	del(pathLoadBalancerMonitorDelete, "vttLoadBalancerHealthMonitorId", l.MonitorID.ValueString())
 }
