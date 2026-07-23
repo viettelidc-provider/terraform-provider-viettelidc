@@ -54,11 +54,8 @@ locals {
 
 Read-Only:
 
-- `cpu` (Number) Number of vCPUs.
 - `default_root_username` (String) Login the template creates, e.g. "root". Empty when the template does not report one.
 - `description` (String) Template description.
 - `id` (String) Template ID — use this as template_id in viettelidc_instance.
-- `memory` (Number) Memory in MB.
 - `name` (String) Template name (e.g. Ubuntu 22.04).
-- `os_type` (String) OS type (e.g. Linux, Windows).
 - `ssh_key_enabled` (Boolean) Whether the template accepts an SSH key pair. When false, key_pair_name / key_pair_id on viettelidc_ovpc_instance have no effect — the template ships with a fixed login and you must use admin_pass. Many appliance images (GitLab, Jenkins, ...) are false.

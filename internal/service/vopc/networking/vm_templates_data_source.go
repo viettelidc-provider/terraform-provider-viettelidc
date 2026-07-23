@@ -46,9 +46,6 @@ type VMTemplateItem struct {
 	ID                  types.String `tfsdk:"id"`
 	Name                types.String `tfsdk:"name"`
 	Description         types.String `tfsdk:"description"`
-	OsType              types.String `tfsdk:"os_type"`
-	CPU                 types.Int64  `tfsdk:"cpu"`
-	Memory              types.Int64  `tfsdk:"memory"`
 	SSHKeyEnabled       types.Bool   `tfsdk:"ssh_key_enabled"`
 	DefaultRootUsername types.String `tfsdk:"default_root_username"`
 }
@@ -90,9 +87,6 @@ func (d *VMTemplatesDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 						"id":          schema.StringAttribute{Computed: true, Description: "Template ID — use this as template_id in viettelidc_instance."},
 						"name":        schema.StringAttribute{Computed: true, Description: "Template name (e.g. Ubuntu 22.04)."},
 						"description": schema.StringAttribute{Computed: true, Description: "Template description."},
-						"os_type":     schema.StringAttribute{Computed: true, Description: "OS type (e.g. Linux, Windows)."},
-						"cpu":         schema.Int64Attribute{Computed: true, Description: "Number of vCPUs."},
-						"memory":      schema.Int64Attribute{Computed: true, Description: "Memory in MB."},
 						"ssh_key_enabled": schema.BoolAttribute{
 							Computed: true,
 							Description: "Whether the template accepts an SSH key pair. When false, key_pair_name / " +
@@ -191,9 +185,6 @@ func (d *VMTemplatesDataSource) Read(ctx context.Context, req datasource.ReadReq
 			ID:                  types.StringValue(id),
 			Name:                types.StringValue(asString(raw, "name")),
 			Description:         types.StringValue(asString(raw, "description")),
-			OsType:              types.StringValue(asString(raw, "osType")),
-			CPU:                 types.Int64Value(asInt64(raw, "cpu")),
-			Memory:              types.Int64Value(asInt64(raw, "memory")),
 			SSHKeyEnabled:       types.BoolValue(asBool(raw, "sshKeyEnabled")),
 			DefaultRootUsername: types.StringValue(asString(raw, "defaultRootUsername")),
 		})
