@@ -480,3 +480,45 @@ func TestValidateCertificate(t *testing.T) {
 		})
 	}
 }
+
+// When listener/delete hard-fails, the pool and monitor must NOT be deleted —
+// deleting them would strand the listener pointing at a dead pool (the orphan
+// bug found by blind-testing against the real API).
+func TestDeleteAdditionalListener_AbortsOnListenerFailure(t *testing.T) {
+	srv := newFakeAPI(t)
+	// LB reads settled so pollLBSettled returns immediately.
+	srv.on(pathLoadBalancerList, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", map[string]interface{}{"items": []map[string]interface{}{
+			{"vttLoadBalancerId": float64(945), "status": "SUCCESS"},
+		}}
+	})
+	// listener/delete fails with a hard (non-busy, non-not-found) error.
+	srv.on(pathLoadBalancerListenerDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(-1), "ERROR_LISTENER_DELETE_FAILED", nil
+	})
+	srv.on(pathLoadBalancerPoolDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", nil
+	})
+	srv.on(pathLoadBalancerMonitorDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", nil
+	})
+
+	r := &LoadBalancerResource{client: srv.newClient(), customerID: "cust-1", defaultVpcID: "100"}
+	l := AdditionalListenerModel{
+		ID:        types.StringValue("2325"),
+		PoolID:    types.StringValue("2050"),
+		MonitorID: types.StringValue("2102"),
+	}
+	var diags diag.Diagnostics
+	r.deleteAdditionalListener(context.Background(), 945, "100", l, &diags)
+
+	if !diags.HasError() {
+		t.Fatal("expected an error diag from the failed listener delete")
+	}
+	if srv.calls[pathLoadBalancerPoolDelete] != 0 {
+		t.Errorf("pool/delete was called %d times; must be 0 after listener/delete failed (orphan bug)", srv.calls[pathLoadBalancerPoolDelete])
+	}
+	if srv.calls[pathLoadBalancerMonitorDelete] != 0 {
+		t.Errorf("monitor/delete was called %d times; must be 0 after listener/delete failed", srv.calls[pathLoadBalancerMonitorDelete])
+	}
+}

@@ -928,7 +928,7 @@ func (r *LoadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 
 	// Reconcile additional listeners: an additional listener is identified by
 	// protocol+port. Ones in the plan but not the prior state are added, ones
-	// gone from the plan are deleted (monitor, then pool, then listener).
+	// gone from the plan are deleted (listener, then pool, then monitor).
 	key := func(l AdditionalListenerModel) string {
 		return strings.ToUpper(l.Protocol.ValueString()) + ":" + fmt.Sprintf("%d", l.Port.ValueInt64())
 	}
@@ -942,7 +942,7 @@ func (r *LoadBalancerResource) Update(ctx context.Context, req resource.UpdateRe
 	}
 	for _, l := range state.AdditionalListeners {
 		if !planKeys[key(l)] {
-			r.deleteAdditionalListener(ctx, plan.VpcID.ValueString(), l, &resp.Diagnostics)
+			r.deleteAdditionalListener(ctx, parseInt(plan.ID.ValueString()), plan.VpcID.ValueString(), l, &resp.Diagnostics)
 		}
 	}
 	for i := range plan.AdditionalListeners {
@@ -1545,13 +1545,59 @@ func (r *LoadBalancerResource) readAdditionalListeners(ctx context.Context, m *L
 	}
 }
 
-// deleteAdditionalListener removes a listener and everything created with it:
-// the monitor and the pool (which cascades its members), then the listener.
-func (r *LoadBalancerResource) deleteAdditionalListener(ctx context.Context, vpcID string, l AdditionalListenerModel, diags *diag.Diagnostics) {
-	del := func(path, key, id string) {
-		if id == "" {
+// pollLBSettled waits until the load balancer's list status is no longer a
+// pending/processing one, so a follow-up mutation isn't issued against an LB
+// mid-operation — which CSA rejects with ...IN_OTHER_PROCESSING. Best-effort:
+// returns as soon as the LB reads SUCCESS/ACTIVE (or a terminal error), or when
+// the timeout/context expires (caller attempts the op anyway).
+func (r *LoadBalancerResource) pollLBSettled(ctx context.Context, lbID int64, listBody map[string]interface{}, timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	for {
+		if resp, _ := callAPI(ctx, r.client, pathLoadBalancerList, listBody); resp != nil {
+			var lr struct {
+				Items []struct {
+					ID     int64  `json:"vttLoadBalancerId"`
+					Status string `json:"status"`
+				} `json:"items"`
+			}
+			if json.Unmarshal(resp.Data, &lr) == nil {
+				for _, it := range lr.Items {
+					if it.ID == lbID {
+						switch strings.ToUpper(it.Status) {
+						case "SUCCESS", "ACTIVE", "ERROR", "FAILED":
+							return
+						}
+					}
+				}
+			}
+		}
+		if time.Now().After(deadline) {
 			return
 		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Second):
+		}
+	}
+}
+
+// deleteAdditionalListener removes a listener and everything created with it:
+// the listener, then its pool (which cascades its members) and monitor.
+func (r *LoadBalancerResource) deleteAdditionalListener(ctx context.Context, lbID int64, vpcID string, l AdditionalListenerModel, diags *diag.Diagnostics) {
+	listBody := map[string]interface{}{
+		"vpc_id": vpcID, "customer_id": r.customerID,
+		"pageIndex": 0, "pageSize": 100, "filters": []interface{}{},
+	}
+	// del returns false when the delete hard-failed, so the caller can stop.
+	del := func(path, key, id string) bool {
+		if id == "" {
+			return true
+		}
+		// Wait for the LB to be idle first; each preceding delete leaves it
+		// processing, and issuing the next one against a busy LB is what CSA
+		// answers with ...IN_OTHER_PROCESSING.
+		r.pollLBSettled(ctx, lbID, listBody, asyncOpTimeout)
 		body := map[string]interface{}{key: id, "vpc_id": vpcID, "customer_id": r.customerID}
 		apiResp, d := callAPIRetryBusy(ctx, r.client, path, body, asyncOpTimeout)
 		if d.HasError() {
@@ -1559,17 +1605,25 @@ func (r *LoadBalancerResource) deleteAdditionalListener(ctx context.Context, vpc
 			// time monitor/delete runs the monitor is already gone. Treat a
 			// not-found as success rather than failing the whole reconcile.
 			if apiResp != nil && isNotFoundMessage(apiResp.Message) {
-				return
+				return true
 			}
 			diags.Append(d...)
+			return false
 		}
+		return true
 	}
 	// Order matters and is top-down: the listener references the pool and the
 	// pool the monitor, so each must go before the thing it points at is gone.
 	// Deleting the monitor or pool while the listener still references them
 	// returns success without actually removing them — that is how a reversed
-	// order leaves orphans behind.
-	del(pathLoadBalancerListenerDelete, "vttLoadBalancerListenerId", l.ID.ValueString())
-	del(pathLoadBalancerPoolDelete, "vttLoadBalancerPoolId", l.PoolID.ValueString())
+	// order leaves orphans behind. And if the listener delete fails, STOP:
+	// deleting its pool/monitor anyway would strand the listener pointing at a
+	// dead pool. Aborting keeps the listener a coherent, retryable unit.
+	if !del(pathLoadBalancerListenerDelete, "vttLoadBalancerListenerId", l.ID.ValueString()) {
+		return
+	}
+	if !del(pathLoadBalancerPoolDelete, "vttLoadBalancerPoolId", l.PoolID.ValueString()) {
+		return
+	}
 	del(pathLoadBalancerMonitorDelete, "vttLoadBalancerHealthMonitorId", l.MonitorID.ValueString())
 }
