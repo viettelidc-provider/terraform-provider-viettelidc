@@ -50,10 +50,10 @@ func (d *InstanceDataSource) Metadata(_ context.Context, req datasource.Metadata
 
 func (d *InstanceDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Look up a ViettelIDC Instance by id.",
+		Description: "Look up a ViettelIDC Instance by id or by name. Exactly one of `id` / `name` must be set.",
 		Attributes: map[string]schema.Attribute{
-			"id":                schema.StringAttribute{Required: true},
-			"name":              schema.StringAttribute{Computed: true},
+			"id":                schema.StringAttribute{Optional: true, Computed: true, Description: "Instance ID. Mutually optional with name."},
+			"name":              schema.StringAttribute{Optional: true, Computed: true, Description: "Instance name. Mutually optional with id."},
 			"cpu":               schema.Int64Attribute{Computed: true},
 			"memory":            schema.Int64Attribute{Computed: true},
 			"status":            schema.StringAttribute{Computed: true},
@@ -94,8 +94,55 @@ func (d *InstanceDataSource) Read(ctx context.Context, req datasource.ReadReques
 		return
 	}
 
+	id := cfg.ID.ValueString()
+	name := cfg.Name.ValueString()
+	if id == "" && name == "" {
+		resp.Diagnostics.AddError("Missing lookup key", "Set either `id` or `name` on data.viettelidc_ovpc_instance.")
+		return
+	}
+	if id != "" && name != "" {
+		resp.Diagnostics.AddError("Conflicting lookup keys", "Set either `id` or `name` on data.viettelidc_ovpc_instance, not both.")
+		return
+	}
+
+	// Name lookup: the detail endpoint only accepts an ID, so resolve name -> id first.
+	if id == "" {
+		listResp, listDiags := callAPI(ctx, d.client, pathVMList, map[string]interface{}{
+			"vpc_id":      vpcID,
+			"customer_id": d.customerID,
+			"pageIndex":   0,
+			"pageSize":    1000,
+		})
+		resp.Diagnostics.Append(listDiags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		items, err := decodeSubnetList(listResp) // shape-generic list decoder
+		if err != nil {
+			resp.Diagnostics.AddError("decode instance list", err.Error())
+			return
+		}
+		var matches []string
+		for _, raw := range items {
+			if asString(raw, "name") == name {
+				matches = append(matches, asIDString(raw, "id"))
+			}
+		}
+		switch len(matches) {
+		case 0:
+			resp.Diagnostics.AddError("Instance not found", fmt.Sprintf("No instance named %q in VPC %s.", name, vpcID))
+			return
+		case 1:
+			id = matches[0]
+		default:
+			resp.Diagnostics.AddError("Instance name is ambiguous",
+				fmt.Sprintf("%d instances are named %q in VPC %s; look one up by id instead.", len(matches), name, vpcID))
+			return
+		}
+	}
+
 	body := map[string]interface{}{
-		"id":          cfg.ID.ValueString(),
+		"id":          id,
 		"vpc_id":      vpcID,
 		"customer_id": d.customerID,
 	}

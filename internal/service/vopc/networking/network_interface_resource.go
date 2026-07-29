@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -259,14 +260,53 @@ func (r *NetworkInterfaceResource) Delete(ctx context.Context, req resource.Dele
 		return
 	}
 
-	// Poll until NIC is fully gone from the API (delete is async).
-	pollBody := map[string]interface{}{
-		"network_interface_id": state.ID.ValueString(),
-		"vpc_id":               state.VpcID.ValueString(),
-		"customer_id":          r.customerID,
-	}
-	if err := pollUntilGone(ctx, r.client, pathNicDetail, pollBody, 2*time.Minute); err != nil {
+	// Poll until the NIC is fully gone (delete is async). This has to use
+	// list+filter for the same reason readInto does: nic/detail answers with a
+	// stub for a NIC that no longer exists, so pollUntilGone against it never
+	// sees "gone" and burns the whole timeout on an already-deleted NIC.
+	if err := r.pollNicGone(ctx, state.VpcID.ValueString(), state.ID.ValueString(), asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("NIC did not disappear after delete", err.Error())
+	}
+}
+
+// pollNicGone waits until id is absent from nic/private/list.
+func (r *NetworkInterfaceResource) pollNicGone(ctx context.Context, vpcID, id string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		body := map[string]interface{}{
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+			"pageIndex":   0,
+			"pageSize":    1000,
+		}
+		apiResp, diags := callAPI(ctx, r.client, pathNicList, body)
+		if diags.HasError() {
+			// The list itself failing means we cannot say the NIC is still
+			// there; treat it like the old code did and stop waiting.
+			return nil
+		}
+		items, err := decodeSubnetList(apiResp)
+		if err != nil {
+			return fmt.Errorf("NIC list decode failed: %w", err)
+		}
+		present := false
+		for _, raw := range items {
+			if asIDString(raw, "id") == id {
+				present = true
+				break
+			}
+		}
+		if !present {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("timed out waiting for NIC %s to disappear (timeout=%s)", id, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
 	}
 }
 
@@ -274,13 +314,18 @@ func (r *NetworkInterfaceResource) ImportState(ctx context.Context, req resource
 	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }
 
+// readInto refreshes m from the API. It uses list+filter rather than nic/detail:
+// the detail endpoint returns a stub with no id/name/vttSubnetId/ipAddress, which
+// made Read a no-op — state kept whatever the plan said and drift was never
+// detected (an update to subnet_id reported success while the NIC never moved).
 func (r *NetworkInterfaceResource) readInto(ctx context.Context, m *NetworkInterfaceResourceModel, diags *diag.Diagnostics) bool {
 	body := map[string]interface{}{
-		"network_interface_id": m.ID.ValueString(),
-		"vpc_id":               m.VpcID.ValueString(),
-		"customer_id":          r.customerID,
+		"vpc_id":      m.VpcID.ValueString(),
+		"customer_id": r.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
 	}
-	apiResp, d := callAPI(ctx, r.client, pathNicDetail, body)
+	apiResp, d := callAPI(ctx, r.client, pathNicList, body)
 	if d.HasError() {
 		if apiResp != nil && isNotFoundMessage(apiResp.Message) {
 			return false
@@ -288,23 +333,64 @@ func (r *NetworkInterfaceResource) readInto(ctx context.Context, m *NetworkInter
 		diags.Append(d...)
 		return true
 	}
-	// Fail fast if NIC entered a terminal error state.
-	if apiResp != nil {
-		var raw map[string]interface{}
-		if err := json.Unmarshal(apiResp.Data, &raw); err == nil {
-			if st := asString(raw, "status"); st == "error" || st == "failed" || st == "ERROR" || st == "FAILED" {
-				diags.AddError(
-					"Network Interface is in error state",
-					fmt.Sprintf("NIC %s has status=%s. Destroy and re-create it before proceeding.", m.ID.ValueString(), st),
-				)
-				return true
-			}
+
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		diags.AddError("NIC list decode failed", err.Error())
+		return true
+	}
+
+	wantID := m.ID.ValueString()
+	var found map[string]interface{}
+	for _, raw := range items {
+		if asIDString(raw, "id") == wantID {
+			found = raw
+			break
 		}
 	}
-	if err := mapNicResponse(apiResp, m); err != nil {
-		diags.AddError("NIC response decode failed", err.Error())
+	if found == nil {
+		return false // gone — drift, let the caller remove it from state
 	}
+
+	// Fail fast if NIC entered a terminal error state.
+	if st := asString(found, "status"); st == "error" || st == "failed" || st == "ERROR" || st == "FAILED" {
+		diags.AddError(
+			"Network Interface is in error state",
+			fmt.Sprintf("NIC %s has status=%s. Destroy and re-create it before proceeding.", wantID, st),
+		)
+		return true
+	}
+
+	fillNicFromList(found, m)
 	return true
+}
+
+// fillNicFromList maps one entry of nic/private/list onto the model. Unlike the
+// detail endpoint the list carries real values, so fields are written
+// unconditionally — that is what lets Terraform see drift.
+func fillNicFromList(data map[string]interface{}, m *NetworkInterfaceResourceModel) {
+	if v := asIDString(data, "id"); v != "" {
+		m.ID = types.StringValue(v)
+	}
+	m.Name = types.StringValue(asString(data, "name"))
+	if v := asIDString(data, "vttSubnetId"); v != "" {
+		m.SubnetID = types.StringValue(v)
+	}
+	if v := asString(data, "ipAssignType"); v != "" {
+		m.IpAssignType = types.StringValue(v)
+	}
+	m.Status = types.StringValue(asString(data, "status"))
+
+	// The list uses "ipAddress" on VM NICs and "primaryIp4" elsewhere; the literal
+	// "default" is the API's way of saying "unset".
+	ip := asString(data, "ipAddress")
+	if ip == "" || ip == "default" {
+		ip = asString(data, "primaryIp4")
+	}
+	if ip == "default" {
+		ip = ""
+	}
+	m.IpAddress = types.StringValue(ip)
 }
 
 // ---------- Pure helpers ----------
@@ -386,4 +472,47 @@ func fillNicFromMap(data map[string]interface{}, m *NetworkInterfaceResourceMode
 		m.Description = types.StringNull()
 	}
 	m.Status = types.StringValue(asString(data, "status"))
+}
+
+// findNicInList fetches one NIC from nic/private/list. The nic/detail endpoint
+// returns a stub with no usable fields, so every code path that needs real NIC
+// state — read, attach polling, detach polling — goes through the list instead.
+// Returns nil when the NIC is not present.
+func findNicInList(ctx context.Context, c *client.Client, customerID, vpcID, nicID string) (map[string]interface{}, error) {
+	apiResp, diags := callAPI(ctx, c, pathNicList, map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	})
+	if diags.HasError() {
+		msg := "unknown error"
+		if errs := diags.Errors(); len(errs) > 0 {
+			msg = errs[0].Detail()
+		}
+		return nil, fmt.Errorf("list NICs: %s", msg)
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return nil, fmt.Errorf("decode NIC list: %w", err)
+	}
+	for _, raw := range items {
+		if asIDString(raw, "id") == nicID {
+			return raw, nil
+		}
+	}
+	return nil, nil
+}
+
+// nicAttachment reports whether the NIC is attached and to which instance,
+// from a nic/private/list entry.
+func nicAttachment(raw map[string]interface{}) (bool, string) {
+	if raw == nil {
+		return false, ""
+	}
+	attached := strings.EqualFold(asString(raw, "attachmentStatus"), "ATTACHED")
+	if asString(raw, "vttEntityType") != "virtual_machine" {
+		return attached, ""
+	}
+	return attached, asIDString(raw, "vttEntityValue")
 }

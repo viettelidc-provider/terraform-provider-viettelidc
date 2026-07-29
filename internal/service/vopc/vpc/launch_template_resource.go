@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -155,7 +157,53 @@ func (r *LaunchTemplateResource) Create(ctx context.Context, req resource.Create
 	if plan.Description.IsNull() || plan.Description.IsUnknown() {
 		plan.Description = types.StringValue("")
 	}
+
+	// create answers with status=CREATING and the template is unusable until it
+	// turns success — roughly 40s in practice. Returning early makes the very
+	// next autoscale_group fail with ERROR_TEMPLATE_NOT_EXIST even though the
+	// template is already listed, which is what the CMP console avoids by
+	// polling launch-template/detail before it opens the ASG form.
+	if err := r.pollReady(ctx, id, vpcID, launchTemplateReadyTimeout); err != nil {
+		resp.Diagnostics.AddError("Launch Template did not become ready", err.Error())
+		return
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+}
+
+// launchTemplateReadyTimeout bounds the wait for status=success after create.
+const launchTemplateReadyTimeout = 10 * time.Minute
+
+// pollReady waits until launch-template/detail reports the template is usable.
+func (r *LaunchTemplateResource) pollReady(ctx context.Context, id, vpcID string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		body := map[string]interface{}{
+			"id":          id,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		apiResp, diags := callAPI(ctx, r.client, pathLaunchTemplateDetail, body)
+		if !diags.HasError() && apiResp != nil {
+			var data map[string]interface{}
+			if err := json.Unmarshal(apiResp.Data, &data); err == nil {
+				switch strings.ToUpper(asString(data, "status")) {
+				case "SUCCESS", "AVAILABLE", "ACTIVE":
+					return nil
+				case "ERROR", "FAILED":
+					return fmt.Errorf("launch template %s entered status=%s", id, asString(data, "status"))
+				}
+			}
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("launch template %s still not ready after %s", id, timeout)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 func (r *LaunchTemplateResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {

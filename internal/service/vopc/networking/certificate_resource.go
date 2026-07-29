@@ -25,10 +25,18 @@ import (
 
 // certItem is one entry from GET /key-manager/api/v1/kms/{vpcId}/certificate.
 type certItem struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	CreatedAt string `json:"createdAt"`
+	ID            string          `json:"id"`
+	Name          string          `json:"name"`
+	Status        string          `json:"status"`
+	CreatedAt     string          `json:"createdAt"`
+	LoadBalancers []certLBBinding `json:"loadBalancers"`
+}
+
+// certLBBinding is a load balancer using the certificate. A cert in use cannot
+// be deleted, so this shows what is holding it. id comes back as a number.
+type certLBBinding struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
 }
 
 // certListResp is the full response body from GET .../certificate.

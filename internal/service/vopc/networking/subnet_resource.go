@@ -247,7 +247,7 @@ func (r *SubnetResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		"vpc_id":      state.VpcID.ValueString(),
 		"customer_id": r.customerID,
 	}
-	if err := pollUntilGone(ctx, r.client, pathSubnetDetail, pollBody, 5*time.Minute); err != nil {
+	if err := pollUntilGone(ctx, r.client, pathSubnetDetail, pollBody, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("Subnet did not disappear after delete", err.Error())
 	}
 }

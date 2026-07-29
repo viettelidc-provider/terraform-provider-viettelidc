@@ -13,7 +13,7 @@ List all vFirewall instances in a ViettelIDC VPC (read-only).
 
 ```terraform
 data "viettelidc_ovpc_vfirewalls" "all" {
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 output "firewall_ids" {

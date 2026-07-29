@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -139,7 +138,7 @@ func (r *SecurityGroupResource) Create(ctx context.Context, req resource.CreateR
 		"vpc_id":            vpcID,
 		"customer_id":       r.customerID,
 	}
-	if err := pollUntilReady(ctx, r.client, pathSGDetail, pollBody, 2*time.Minute); err != nil {
+	if err := pollUntilReady(ctx, r.client, pathSGDetail, pollBody, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("Security Group did not become ready", err.Error())
 		return
 	}
@@ -241,7 +240,7 @@ func (r *SecurityGroupResource) Delete(ctx context.Context, req resource.DeleteR
 		"vpc_id":            state.VpcID.ValueString(),
 		"customer_id":       r.customerID,
 	}
-	if err := pollUntilGone(ctx, r.client, pathSGDetail, pollBody, 2*time.Minute); err != nil {
+	if err := pollUntilGone(ctx, r.client, pathSGDetail, pollBody, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("Security Group did not disappear after delete", err.Error())
 	}
 }

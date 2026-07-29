@@ -2,25 +2,25 @@
 page_title: "viettelidc_ovpc_route_table Resource - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  ViettelIDC Route Table. NOTE: The API has no delete endpoint; destroying this resource removes it from Terraform state only.
+  ViettelIDC Route Table. Destroying this resource calls the API delete endpoint and removes the route table for real.
 ---
 
 # viettelidc_ovpc_route_table (Resource)
 
-ViettelIDC Route Table. NOTE: The API has no delete endpoint; destroying this resource removes it from Terraform state only.
+ViettelIDC Route Table. Destroying this resource calls the API delete endpoint and removes the route table for real.
 
 ## Example Usage
 
 ```terraform
 resource "viettelidc_ovpc_route_table" "main" {
   name   = "main-rt"
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 resource "viettelidc_ovpc_route_table_association" "assoc" {
   route_table_id = viettelidc_ovpc_route_table.main.id
   subnet_id      = viettelidc_ovpc_subnet.private.id
-  vpc_id         = viettelidc_ovpc_vpc.main.id
+  vpc_id         = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 

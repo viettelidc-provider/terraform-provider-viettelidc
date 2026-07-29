@@ -8,5 +8,5 @@ resource "viettelidc_ovpc_instance" "vm" {
   key_pair_name      = viettelidc_ovpc_key_pair.deploy.key_name
   security_group_ids = [viettelidc_ovpc_security_group.web.id]
   availability_zone  = "HN1"
-  vpc_id             = viettelidc_ovpc_vpc.main.id
+  vpc_id             = data.viettelidc_ovpc_vpc.main.id
 }

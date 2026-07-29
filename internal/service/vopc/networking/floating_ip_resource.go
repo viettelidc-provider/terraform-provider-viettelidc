@@ -56,7 +56,11 @@ func (r *FloatingIPResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *FloatingIPResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. Destroying the resource disassociates and releases the IP.",
+		Description: "Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. " +
+			"WARNING: destroying this resource only DISASSOCIATES the IP — it is NOT released. " +
+			"The API exposes no release/delete endpoint for Floating IPs, so the address stays allocated to your account " +
+			"(and keeps being billed) until you release it from the portal. " +
+			"Prefer setting `id` to an existing Floating IP so Terraform associates one you already own instead of allocating a new one.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Optional:    true,
@@ -162,7 +166,7 @@ func (r *FloatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 
 	// Wait until the FIP has been assigned a public IP (AVAILABLE) before associating.
 	// The backend assigns the IP asynchronously after allocation.
-	allocDeadline := time.Now().Add(2 * time.Minute)
+	allocDeadline := time.Now().Add(asyncOpTimeout)
 	for {
 		var pollDiags diag.Diagnostics
 		r.readInto(ctx, &plan, &pollDiags)
@@ -197,13 +201,23 @@ func (r *FloatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 			"customer_id":          r.customerID,
 		}
 		if _, assocDiags := callAPI(ctx, r.client, pathFloatingIPAssociate, assocBody); assocDiags.HasError() {
-			// Association failed — attempt cleanup by disassociating/releasing the allocated FIP.
+			// Association failed. Best-effort disassociate, but note that the API has no
+			// release endpoint: an IP we just allocated stays allocated and billed, and it
+			// is not in state, so Terraform cannot clean it up on a later run.
 			cleanupBody := map[string]interface{}{
 				"floating_ip_id": floatingID,
 				"vpc_id":         vpcID,
 				"customer_id":    r.customerID,
 			}
 			_, _ = callAPI(ctx, r.client, pathFloatingIPDisassociate, cleanupBody) // best-effort
+			if plan.ID.IsNull() || plan.ID.ValueString() == "" {
+				resp.Diagnostics.AddWarning(
+					"Newly allocated Floating IP is now orphaned",
+					fmt.Sprintf("Floating IP %s was allocated but association failed, and the API has no release endpoint. "+
+						"It is not tracked in Terraform state. Release it from the ViettelIDC portal to stop being billed.",
+						floatingID),
+				)
+			}
 			resp.Diagnostics.Append(assocDiags...)
 			return
 		}
@@ -249,6 +263,15 @@ func (r *FloatingIPResource) Delete(ctx context.Context, req resource.DeleteRequ
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	// The API has no release/delete endpoint for Floating IPs — the address stays
+	// allocated (and billed) after destroy. Say so loudly instead of pretending.
+	resp.Diagnostics.AddWarning(
+		"Floating IP was not released",
+		fmt.Sprintf("Floating IP %s (%s) was disassociated but NOT released — the API has no release endpoint. "+
+			"It remains allocated to your account and continues to be billed. Release it from the ViettelIDC portal.",
+			state.ID.ValueString(), state.PublicIP.ValueString()),
+	)
 
 	// Only disassociate if the FIP was associated with a VM instance.
 	if !state.InstanceID.IsNull() && state.InstanceID.ValueString() != "" {

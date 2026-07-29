@@ -67,6 +67,7 @@ const (
 	pathVMDetail = "/csa/api/v1/vm/detail"
 	pathVMList   = "/csa/api/v1/vpc/vm/list"
 	pathVMStop   = "/csa/api/v1/vm/stop"
+	pathVMStart  = "/csa/api/v1/vm/start"
 	pathVMUpdate = "/csa/api/v1/vm/update"
 	pathVMDelete = "/csa/api/v1/vm/delete"
 
@@ -85,6 +86,7 @@ const (
 	pathRouteTableList         = "/csa/api/v1/networking/route-table/list"
 	pathRouteTableSubnetAttach = "/csa/api/v1/networking/route-table/subnet/attach"
 	pathRouteTableSubnetDetach = "/csa/api/v1/networking/route-table/subnet/detach"
+	pathRouteTableSubnetList   = "/csa/api/v1/networking/route-table/association/subnet/list"
 	pathRouteTableAssociation  = "/csa/api/v1/networking/route-table/association/subnet/all"
 	pathRouteTableAvailable    = "/csa/api/v1/networking/route-table/available/subnet/all"
 
@@ -103,7 +105,12 @@ const (
 	pathLoadBalancerDetail      = "/csa/api/v1/networking/loadbalancer/detail"
 	pathLoadBalancerList        = "/csa/api/v1/networking/loadbalancer/list"
 	pathLoadBalancerListeners   = "/csa/api/v1/networking/loadbalancer/listener-by-lb/all"
+	pathLoadBalancerListenerDelete = "/csa/api/v1/networking/loadbalancer/listener/delete"
+	pathLoadBalancerPoolDelete     = "/csa/api/v1/networking/loadbalancer/pool/delete"
+	pathLoadBalancerMonitorDelete  = "/csa/api/v1/networking/loadbalancer/monitor/delete"
 	pathLoadBalancerPools       = "/csa/api/v1/networking/loadbalancer/pool-by-lb/all"
+	pathLoadBalancerMembers     = "/csa/api/v1/networking/loadbalancer/member-by-lb/all"
+	pathLoadBalancerMonitors    = "/csa/api/v1/networking/loadbalancer/monitor-by-lb/all"
 	pathLoadBalancerListLayer7  = "/csa/api/v1/networking/loadbalancer/list-all-layer-7"
 	pathLoadBalancerListTypes   = "/csa/api/v1/networking/loadbalancer/list-loadbalancer-type"
 	pathLoadBalancerAttachedNic = "/csa/api/v1/networking/loadbalancer/attached-nic/list"
@@ -118,9 +125,9 @@ const (
 
 	pathBackupRecordList = "/csa/api/v1/storage/backup/record/list"
 
-	pathRegionHostsByCust    = "/csa/api/v1/region/list-host-by-customer"
-	pathRegionHostsByOrder   = "/csa/api/v1/region/list-host-by-order"
-	pathVMTemplateList = "/csa/api/v1/host-information/list-template"
+	pathRegionHostsByCust  = "/csa/api/v1/region/list-host-by-customer"
+	pathRegionHostsByOrder = "/csa/api/v1/region/list-host-by-order"
+	pathVMTemplateList     = "/csa/api/v1/host-information/list-template"
 )
 
 // listWarningThreshold triggers a Diagnostics warning on list-style data

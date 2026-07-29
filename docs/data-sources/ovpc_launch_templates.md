@@ -13,7 +13,7 @@ List all ViettelIDC Launch Templates in a VPC.
 
 ```terraform
 data "viettelidc_ovpc_launch_templates" "all" {
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 output "template_names" {

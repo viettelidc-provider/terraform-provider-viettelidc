@@ -303,7 +303,7 @@ func (r *SecurityGroupAttachmentResource) Delete(ctx context.Context, req resour
 		}
 
 		// Wait for detach to complete (async API)
-		deadline := time.Now().Add(2 * time.Minute)
+		deadline := time.Now().Add(asyncOpTimeout)
 		for {
 			sgs, err := r.getCurrentSGs(ctx, instanceID, vpcID)
 			if err != nil {

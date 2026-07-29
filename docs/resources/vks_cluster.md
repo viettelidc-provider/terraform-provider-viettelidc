@@ -3,7 +3,7 @@ page_title: "viettelidc_vks_cluster Resource - viettelidc"
 subcategory: "Kubernetes Service (VDKS)"
 description: |-
   Provides a VKS Kubernetes Cluster resource.
-  Note: Creation is explicitly disabled via Terraform because cluster provisioning takes a very long time. Use terraform import to manage existing clusters.
+  **Note:** Creation is explicitly disabled via Terraform because cluster provisioning takes a very long time. Use `terraform import` to manage existing clusters.
 ---
 
 # viettelidc_vks_cluster (Resource)

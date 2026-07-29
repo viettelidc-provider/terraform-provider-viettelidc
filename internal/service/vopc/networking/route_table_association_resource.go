@@ -5,8 +5,11 @@ package networking
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -122,6 +125,12 @@ func (r *RouteTableAssociationResource) Create(ctx context.Context, req resource
 		}
 	}
 
+	err := pollSubnetAssociation(ctx, r.client, plan.RouteTableID.ValueString(), plan.SubnetID.ValueString(), vpcID, r.customerID, true)
+	if err != nil {
+		resp.Diagnostics.AddWarning("Timeout waiting for subnet attach", err.Error())
+		// Don't fail the creation completely if just timed out, maybe it's just slow
+	}
+
 	plan.ID = types.StringValue(fmt.Sprintf("%s/%s", plan.RouteTableID.ValueString(), plan.SubnetID.ValueString()))
 	plan.VpcID = types.StringValue(vpcID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
@@ -165,6 +174,12 @@ func (r *RouteTableAssociationResource) Delete(ctx context.Context, req resource
 			return
 		}
 		resp.Diagnostics.Append(d...)
+		return
+	}
+
+	err := pollSubnetAssociation(ctx, r.client, state.RouteTableID.ValueString(), state.SubnetID.ValueString(), vpcID, r.customerID, false)
+	if err != nil {
+		resp.Diagnostics.AddWarning("Timeout waiting for subnet detach", err.Error())
 	}
 }
 
@@ -177,4 +192,131 @@ func (r *RouteTableAssociationResource) ImportState(ctx context.Context, req res
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("route_table_id"), parts[0])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("subnet_id"), parts[1])...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), req.ID)...)
+}
+
+func getInt64(v interface{}) int64 {
+	switch val := v.(type) {
+	case float64:
+		return int64(val)
+	case int:
+		return int64(val)
+	case int64:
+		return val
+	case string:
+		i, _ := strconv.ParseInt(val, 10, 64)
+		return i
+	}
+	return 0
+}
+
+func getSubnetName(ctx context.Context, c *client.Client, subnetID, vpcID, customerID string) string {
+	subnetIDInt, _ := strconv.ParseInt(subnetID, 10, 64)
+	vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+	custIDInt, _ := strconv.ParseInt(customerID, 10, 64)
+
+	body := map[string]interface{}{
+		"subnet_id":   subnetIDInt,
+		"vpc_id":      vpcIDInt,
+		"customer_id": custIDInt,
+	}
+
+	apiResp, d := callAPI(ctx, c, pathSubnetDetail, body)
+	if d.HasError() || apiResp == nil {
+		return ""
+	}
+
+	var data map[string]interface{}
+	if err := json.Unmarshal(apiResp.Data, &data); err != nil {
+		return ""
+	}
+
+	if name, ok := data["name"].(string); ok {
+		return name
+	}
+	return ""
+}
+
+func pollSubnetAssociation(ctx context.Context, client *client.Client, routeTableID, subnetID, vpcID, customerID string, expectAttached bool) error {
+	rtIDInt, _ := strconv.ParseInt(routeTableID, 10, 64)
+	vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+	custIDInt, _ := strconv.ParseInt(customerID, 10, 64)
+	subnetIDInt, _ := strconv.ParseInt(subnetID, 10, 64)
+
+	subnetName := getSubnetName(ctx, client, subnetID, vpcID, customerID)
+
+	body := map[string]interface{}{
+		"pageIndex":       0,
+		"pageSize":        1000,
+		"filters":         []interface{}{},
+		"vttRouteTableId": rtIDInt,
+		"vpcId":           vpcIDInt,
+		"customerId":      custIDInt,
+	}
+
+	timeout := time.After(asyncOpTimeout)
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for subnet association status (expectAttached=%v)", expectAttached)
+		case <-ticker.C:
+			apiResp, d := callAPI(ctx, client, pathRouteTableSubnetList, body)
+			if d.HasError() || apiResp == nil {
+				continue
+			}
+
+			var respData struct {
+				Items []map[string]interface{} `json:"items"`
+			}
+			if err := json.Unmarshal(apiResp.Data, &respData); err != nil {
+				continue
+			}
+
+			found := false
+			for _, item := range respData.Items {
+				itemMatched := false
+
+				// Match by name if we got it
+				if subnetName != "" {
+					if name, ok := item["name"].(string); ok && name == subnetName {
+						itemMatched = true
+					}
+				}
+
+				// Fallback ID matching just in case
+				if !itemMatched {
+					id1 := getInt64(item["id"])
+					id2 := getInt64(item["subnetId"])
+					id3 := getInt64(item["vttSubnetId"])
+					if id1 == subnetIDInt || id2 == subnetIDInt || id3 == subnetIDInt {
+						itemMatched = true
+					} else {
+						itemBytes, _ := json.Marshal(item)
+						if strings.Contains(string(itemBytes), subnetID) {
+							itemMatched = true
+						}
+					}
+				}
+
+				if itemMatched {
+					status, _ := item["status"].(string)
+					if status == "ATTACHED" {
+						found = true
+						break
+					}
+				}
+			}
+
+			if expectAttached && found {
+				return nil
+			}
+			if !expectAttached && !found {
+				return nil
+			}
+		}
+	}
 }

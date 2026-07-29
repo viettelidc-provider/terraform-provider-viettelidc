@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
@@ -122,8 +121,6 @@ func (d *VPCDataSource) Read(ctx context.Context, req datasource.ReadRequest, re
 	}
 
 	tflog.Debug(ctx, "[VPCDataSource] raw list response", map[string]interface{}{"data": string(apiResp.Data)})
-	_ = os.WriteFile("vpc_list_raw.json", apiResp.Data, 0644)
-	_ = os.WriteFile("vpc_list_customerid.txt", []byte(fmt.Sprintf("customer_id=%s\n", d.customerID)), 0644)
 	items, err := decodeVPCList(apiResp)
 	if err != nil {
 		resp.Diagnostics.AddError("decode vpc list", err.Error())
@@ -160,7 +157,11 @@ func mapVPCDataSource(resp *client.APIResponse, m *VPCDataSourceModel) error {
 	if v := asString(data, "name"); v != "" {
 		m.Name = types.StringValue(v)
 	}
-	if v := asString(data, "cidrBlock"); v != "" {
+	// The real API returns the CIDR as "cidrFormat"; keep the other spellings
+	// for the fake-api used in tests.
+	if v := asString(data, "cidrFormat"); v != "" {
+		m.CidrBlock = types.StringValue(v)
+	} else if v := asString(data, "cidrBlock"); v != "" {
 		m.CidrBlock = types.StringValue(v)
 	} else if v := asString(data, "cidr_block"); v != "" {
 		m.CidrBlock = types.StringValue(v)
@@ -201,7 +202,9 @@ func decodeVPCList(resp *client.APIResponse) ([]VPCDataSourceModel, error) {
 			m.ID = types.StringValue(id)
 		}
 		m.Name = types.StringValue(asString(data, "name"))
-		if v := asString(data, "cidrBlock"); v != "" {
+		if v := asString(data, "cidrFormat"); v != "" {
+			m.CidrBlock = types.StringValue(v)
+		} else if v := asString(data, "cidrBlock"); v != "" {
 			m.CidrBlock = types.StringValue(v)
 		} else {
 			m.CidrBlock = types.StringValue(asString(data, "cidr_block"))

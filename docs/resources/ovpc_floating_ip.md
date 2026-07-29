@@ -2,12 +2,12 @@
 page_title: "viettelidc_ovpc_floating_ip Resource - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. Destroying the resource disassociates and releases the IP.
+  Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. WARNING: destroying this resource only DISASSOCIATES the IP — it is NOT released. The API exposes no release/delete endpoint for Floating IPs, so the address stays allocated to your account (and keeps being billed) until you release it from the portal. Prefer setting id to an existing Floating IP so Terraform associates one you already own instead of allocating a new one.
 ---
 
 # viettelidc_ovpc_floating_ip (Resource)
 
-Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. Destroying the resource disassociates and releases the IP.
+Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC. WARNING: destroying this resource only DISASSOCIATES the IP — it is NOT released. The API exposes no release/delete endpoint for Floating IPs, so the address stays allocated to your account (and keeps being billed) until you release it from the portal. Prefer setting `id` to an existing Floating IP so Terraform associates one you already own instead of allocating a new one.
 
 ## Example Usage
 
@@ -15,7 +15,7 @@ Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC.
 resource "viettelidc_ovpc_floating_ip" "fip" {
   instance_id          = viettelidc_ovpc_instance.vm.id
   network_interface_id = viettelidc_ovpc_instance.vm.root_nic_id
-  vpc_id               = viettelidc_ovpc_vpc.main.id
+  vpc_id               = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 

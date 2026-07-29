@@ -13,7 +13,7 @@ List all ViettelIDC subnets in a VPC.
 
 ```terraform
 data "viettelidc_ovpc_subnets" "all" {
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 output "subnet_ids" {

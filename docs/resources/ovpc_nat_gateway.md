@@ -7,23 +7,24 @@ description: |-
 
 # viettelidc_ovpc_nat_gateway (Resource)
 
-ViettelIDC NAT Gateway enables instances in a **private subnet** to initiate outbound connections to the internet.
-
-> **Note**: NAT Gateway must be attached to a **private subnet** (`is_public_zone = false`). It provides outbound internet access for private subnet instances via an Internet Gateway.
+ViettelIDC NAT Gateway allows instances in a private subnet to connect to the internet.
 
 ## Example Usage
 
 ```terraform
 data "viettelidc_ovpc_internet_gateway" "igw" {
   name   = "default-igw"
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 resource "viettelidc_ovpc_nat_gateway" "nat" {
-  name                = "main-nat"
-  subnet_id           = viettelidc_ovpc_subnet.private.id  # must be a private subnet
+  name = "main-nat"
+  # A NAT Gateway attaches to a private subnet (is_public_zone = false) — it is
+  # what gives that subnet outbound internet. A public subnet is rejected.
+  subnet_id           = viettelidc_ovpc_subnet.private.id
   internet_gateway_id = data.viettelidc_ovpc_internet_gateway.igw.id
-  vpc_id              = viettelidc_ovpc_vpc.main.id
+  # connect_type is computed (always true) — do not set it.
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
@@ -34,7 +35,7 @@ resource "viettelidc_ovpc_nat_gateway" "nat" {
 
 - `internet_gateway_id` (String) ID of the Internet Gateway to use for outbound traffic.
 - `name` (String) Human-readable NAT Gateway name.
-- `subnet_id` (String) ID of the **private subnet** (`is_public_zone = false`) where the NAT Gateway will be placed. NAT Gateway only works with private subnets.
+- `subnet_id` (String) ID of the subnet where the NAT Gateway will be placed. Must be a private subnet (is_public_zone = false); the NAT Gateway is what gives a private subnet outbound internet, so attaching it to a public subnet is rejected.
 
 ### Optional
 
@@ -42,7 +43,7 @@ resource "viettelidc_ovpc_nat_gateway" "nat" {
 
 ### Read-Only
 
-- `connect_type` (Boolean) Connection type. Always `true` (public connection).
+- `connect_type` (Boolean) Connection type. Always true (public connection).
 - `created_at` (String) Timestamp when the NAT Gateway was created.
 - `floating_ip` (String) The floating IP address assigned to the NAT Gateway.
 - `floating_ip_id` (String) ID of the floating IP assigned to the NAT Gateway.
