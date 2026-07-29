@@ -14,7 +14,7 @@ ViettelIDC Key Pair — SSH key pair for VM access.
 ```terraform
 resource "viettelidc_ovpc_key_pair" "deploy" {
   key_name = "deploy-key"
-  vpc_id   = viettelidc_ovpc_vpc.main.id
+  vpc_id   = data.viettelidc_ovpc_vpc.main.id
 }
 
 output "private_key_url" {

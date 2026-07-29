@@ -204,7 +204,7 @@ func (r *SecurityGroupRuleResource) Create(ctx context.Context, req resource.Cre
 
 	// SG rule list endpoint only returns rules with status "success";
 	// newly-created rules may still be in "pending" state. Poll until visible.
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(asyncOpTimeout)
 	var found bool
 	for {
 		var pollDiags diag.Diagnostics
@@ -273,7 +273,7 @@ func (r *SecurityGroupRuleResource) Delete(ctx context.Context, req resource.Del
 	// Simple retry in case a transient lock is still releasing on the backend.
 	// If a parallel delete is in progress, the API returns ERROR_SECURITY_RULE_IS_IN_ANOTHER_PROCESS.
 	// Wait and retry for up to 2 minutes.
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(asyncOpTimeout)
 	for {
 		apiResp, diags := callAPI(ctx, r.client, pathSGRuleUpdate, body)
 		if !diags.HasError() {
@@ -336,6 +336,12 @@ func deriveProtocolName(ruleType string) string {
 		if strings.Contains(upper, proto) {
 			return proto
 		}
+	}
+	switch upper {
+	case "SSH", "HTTP", "HTTPS", "IMAP":
+		return "TCP"
+	case "DNS":
+		return "UDP"
 	}
 	return ""
 }

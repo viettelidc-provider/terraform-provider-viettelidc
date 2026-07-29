@@ -7,10 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+
+	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
 
 // ---------- Helper: build a minimal LB detail response ----------
@@ -361,5 +365,160 @@ func TestLoadBalancerDataSource_ByName(t *testing.T) {
 	}
 	if foundID != 11 {
 		t.Errorf("expected id=11, got %d", foundID)
+	}
+}
+
+// The list endpoint carries ipAddress, provisioningStatus and
+// isPublicLoadbalancer; the data source used to drop all three, so looking a
+// load balancer up told you nothing about where to point traffic.
+func TestLoadBalancerDataSource_LookupByIPAddress(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"code":0,"data":{"items":[
+			{"vttLoadBalancerId":928,"name":"other","ipAddress":"10.17.10.10"},
+			{"vttLoadBalancerId":929,"name":"dev","ipAddress":"10.17.10.157",
+			 "status":"success","operatingStatus":"online","provisioningStatus":"active",
+			 "isPublicLoadbalancer":false,"vttSubnetId":9935,
+			 "vttLoadbalancerTypeName":"NETWORK TCP-UDP","loadbalancerTypeName":"LB Compact"}
+		]}}`))
+	}))
+	defer srv.Close()
+
+	d := &LoadBalancerDataSource{client: client.NewClient(srv.URL, "tok"), customerID: "238250", defaultVpcID: "39721"}
+	cfg := LoadBalancerDataSourceModel{IPAddress: types.StringValue("10.17.10.157")}
+	got, diags := d.lookup(context.Background(), &cfg)
+	if diags.HasError() {
+		t.Fatalf("lookup: %v", diags)
+	}
+	if got.ID.ValueString() != "929" || got.Name.ValueString() != "dev" {
+		t.Fatalf("matched the wrong load balancer: %s/%s", got.ID.ValueString(), got.Name.ValueString())
+	}
+	if got.ProvisioningStatus.ValueString() != "active" || got.IsPublicLoadBalancer.ValueBool() {
+		t.Errorf("new fields not populated: %+v", got)
+	}
+}
+
+// A NETWORK TCP-UDP load balancer cannot serve HTTP. The API accepts the
+// request anyway and builds a load balancer nothing can reach, so the config
+// has to be stopped at plan time.
+func TestValidateListenerProtocol(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name     string
+		lbType   string
+		protocol string
+		wantErr  bool
+	}{
+		{name: "network with udp", lbType: "NETWORK TCP-UDP", protocol: "UDP"},
+		{name: "network with tcp", lbType: "NETWORK TCP-UDP", protocol: "TCP"},
+		{name: "network with http", lbType: "NETWORK TCP-UDP", protocol: "HTTP", wantErr: true},
+		{name: "application with https", lbType: "APPLICATION HTTP-HTTPS", protocol: "HTTPS"},
+		{name: "application with tcp", lbType: "APPLICATION HTTP-HTTPS", protocol: "TCP", wantErr: true},
+		{name: "unknown lb type is not second-guessed", lbType: "SOMETHING NEW", protocol: "HTTP"},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			diags := validateListenerProtocol(types.StringValue(tc.lbType), types.StringValue(tc.protocol))
+			if diags.HasError() != tc.wantErr {
+				t.Fatalf("lbType=%q protocol=%q: got error=%v, want %v (%v)",
+					tc.lbType, tc.protocol, diags.HasError(), tc.wantErr, diags)
+			}
+		})
+	}
+}
+
+// Omitting the new attributes has to keep producing the load balancer configs
+// written before they existed.
+func TestLoadBalancerListenerPoolDefaults(t *testing.T) {
+	t.Parallel()
+	if got := defaultStr(types.StringNull(), "web-pool"); got != "web-pool" {
+		t.Errorf("null should fall back, got %q", got)
+	}
+	if got := defaultStr(types.StringValue(""), "web-pool"); got != "web-pool" {
+		t.Errorf("empty string should fall back, got %q", got)
+	}
+	if got := defaultStr(types.StringValue("custom"), "web-pool"); got != "custom" {
+		t.Errorf("set value should win, got %q", got)
+	}
+	if got := defaultInt(types.Int64Null(), 80); got != 80 {
+		t.Errorf("null port should fall back, got %d", got)
+	}
+	if got := defaultInt(types.Int64Value(53), 80); got != 53 {
+		t.Errorf("set port should win, got %d", got)
+	}
+}
+
+// certificate_id and TERMINATED_HTTPS are a pair: the cert only terminates TLS,
+// and TERMINATED_HTTPS is the only protocol that presents one.
+func TestValidateCertificate(t *testing.T) {
+	t.Parallel()
+	str := types.StringValue
+	null := types.StringNull()
+	cases := []struct {
+		name     string
+		protocol types.String
+		cert     types.String
+		wantErr  bool
+	}{
+		{name: "terminated with cert", protocol: str("TERMINATED_HTTPS"), cert: str("abc"), wantErr: false},
+		{name: "terminated without cert", protocol: str("TERMINATED_HTTPS"), cert: null, wantErr: true},
+		{name: "http with cert", protocol: str("HTTP"), cert: str("abc"), wantErr: true},
+		{name: "http without cert", protocol: str("HTTP"), cert: null, wantErr: false},
+		{name: "tcp without cert", protocol: str("TCP"), cert: null, wantErr: false},
+		// cert from another resource is unknown at plan — cannot validate, must not error.
+		{name: "terminated with unknown cert", protocol: str("TERMINATED_HTTPS"), cert: types.StringUnknown(), wantErr: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := validateCertificate(tc.protocol, tc.cert).HasError(); got != tc.wantErr {
+				t.Fatalf("protocol=%s cert=%v: got error=%v want %v", tc.protocol, tc.cert, got, tc.wantErr)
+			}
+		})
+	}
+}
+
+// When listener/delete hard-fails, the pool and monitor must NOT be deleted —
+// deleting them would strand the listener pointing at a dead pool (the orphan
+// bug found by blind-testing against the real API).
+func TestDeleteAdditionalListener_AbortsOnListenerFailure(t *testing.T) {
+	srv := newFakeAPI(t)
+	// LB reads settled so pollLBSettled returns immediately.
+	srv.on(pathLoadBalancerList, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", map[string]interface{}{"items": []map[string]interface{}{
+			{"vttLoadBalancerId": float64(945), "status": "SUCCESS"},
+		}}
+	})
+	// listener/delete fails with a hard (non-busy, non-not-found) error.
+	srv.on(pathLoadBalancerListenerDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(-1), "ERROR_LISTENER_DELETE_FAILED", nil
+	})
+	srv.on(pathLoadBalancerPoolDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", nil
+	})
+	srv.on(pathLoadBalancerMonitorDelete, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "", nil
+	})
+
+	r := &LoadBalancerResource{client: srv.newClient(), customerID: "cust-1", defaultVpcID: "100"}
+	l := AdditionalListenerModel{
+		ID:        types.StringValue("2325"),
+		PoolID:    types.StringValue("2050"),
+		MonitorID: types.StringValue("2102"),
+	}
+	var diags diag.Diagnostics
+	r.deleteAdditionalListener(context.Background(), 945, "100", l, &diags)
+
+	if !diags.HasError() {
+		t.Fatal("expected an error diag from the failed listener delete")
+	}
+	if srv.calls[pathLoadBalancerPoolDelete] != 0 {
+		t.Errorf("pool/delete was called %d times; must be 0 after listener/delete failed (orphan bug)", srv.calls[pathLoadBalancerPoolDelete])
+	}
+	if srv.calls[pathLoadBalancerMonitorDelete] != 0 {
+		t.Errorf("monitor/delete was called %d times; must be 0 after listener/delete failed", srv.calls[pathLoadBalancerMonitorDelete])
 	}
 }

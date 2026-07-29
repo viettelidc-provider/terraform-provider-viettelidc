@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -252,13 +253,29 @@ func (r *VolumeResource) Delete(ctx context.Context, req resource.DeleteRequest,
 		"vpc_id":      vpcID,
 		"customer_id": r.customerID,
 	}
-	apiResp, diags := callAPI(ctx, r.client, pathVolumeDelete, body)
-	if diags.HasError() {
+	// A volume attached to a VM that is still being deleted answers
+	// ERROR_VOLUME_PROCESS_IS_RUNNING. That clears on its own once the VM is gone,
+	// so retry instead of making the user run `terraform destroy` twice.
+	var apiResp *client.APIResponse
+	var diags diag.Diagnostics
+	deadline := time.Now().Add(volumeDeleteTimeout)
+	for {
+		apiResp, diags = callAPI(ctx, r.client, pathVolumeDelete, body)
+		if !diags.HasError() {
+			break
+		}
 		if apiResp != nil && isNotFoundMessage(apiResp.Message) {
 			return
 		}
-		resp.Diagnostics.Append(diags...)
-		return
+		if apiResp == nil || !strings.Contains(apiResp.Message, "ERROR_VOLUME_PROCESS_IS_RUNNING") || time.Now().After(deadline) {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
 	}
 
 	detailBody := map[string]interface{}{

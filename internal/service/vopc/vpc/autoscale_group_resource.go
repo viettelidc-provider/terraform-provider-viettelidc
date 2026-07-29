@@ -7,9 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -25,9 +27,10 @@ import (
 
 // Compile-time interface assertions.
 var (
-	_ resource.Resource                = (*AutoscaleGroupResource)(nil)
-	_ resource.ResourceWithConfigure   = (*AutoscaleGroupResource)(nil)
-	_ resource.ResourceWithImportState = (*AutoscaleGroupResource)(nil)
+	_ resource.Resource                   = (*AutoscaleGroupResource)(nil)
+	_ resource.ResourceWithConfigure      = (*AutoscaleGroupResource)(nil)
+	_ resource.ResourceWithImportState    = (*AutoscaleGroupResource)(nil)
+	_ resource.ResourceWithValidateConfig = (*AutoscaleGroupResource)(nil)
 )
 
 // AutoscaleGroupResource implements `viettelidc_autoscale_group`.
@@ -51,6 +54,12 @@ type AutoscaleGroupResourceModel struct {
 	ScaleInThreshold  types.Int64  `tfsdk:"scale_in_threshold"`
 	HasLoadBalancer   types.Bool   `tfsdk:"has_load_balancer"`
 	VpcID             types.String `tfsdk:"vpc_id"`
+
+	// Load-balancer mode (is_autoscale = false). See buildAutoscaleGroupCreateBody.
+	LoadBalancerID     types.String `tfsdk:"loadbalancer_id"`
+	LoadBalancerPoolID types.String `tfsdk:"loadbalancer_pool_id"`
+	SubnetID           types.String `tfsdk:"subnet_id"`
+	PortNumber         types.Int64  `tfsdk:"port_number"`
 }
 
 // NewAutoscaleGroupResource constructs the resource (registered in iac/provider.go).
@@ -62,8 +71,13 @@ func (r *AutoscaleGroupResource) Metadata(_ context.Context, req resource.Metada
 
 func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "ViettelIDC Autoscale Group. All attributes are immutable (RequiresReplace / ForceNew). " +
-			"Read() uses list+filter because the API has no detail endpoint for ASG.",
+		Description: "ViettelIDC Autoscale Group. The API accepts two shapes: with " +
+			"is_autoscale the group scales on a metric and needs min_size, max_size " +
+			"and both thresholds; with has_load_balancer it is a fixed pool behind an " +
+			"existing load balancer and needs loadbalancer_id, loadbalancer_pool_id, " +
+			"subnet_id and port_number instead. All attributes are immutable " +
+			"(RequiresReplace / ForceNew). Read() uses list+filter because the API has " +
+			"no detail endpoint for ASG.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,
@@ -101,15 +115,15 @@ func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"min_size": schema.Int64Attribute{
-				Required:    true,
-				Description: "Minimum number of instances. Immutable.",
+				Optional:    true,
+				Description: "Minimum number of instances. Required when is_autoscale is true; omit in load-balancer mode. Immutable.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
 			},
 			"max_size": schema.Int64Attribute{
-				Required:    true,
-				Description: "Maximum number of instances. Immutable.",
+				Optional:    true,
+				Description: "Maximum number of instances. Required when is_autoscale is true; omit in load-balancer mode. Immutable.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
@@ -124,15 +138,15 @@ func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"scale_out_threshold": schema.Int64Attribute{
-				Required:    true,
-				Description: "CPU % threshold to scale out. Immutable.",
+				Optional:    true,
+				Description: "CPU % threshold to scale out. Required when is_autoscale is true; omit in load-balancer mode. Immutable.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
 			},
 			"scale_in_threshold": schema.Int64Attribute{
-				Required:    true,
-				Description: "CPU % threshold to scale in. Immutable.",
+				Optional:    true,
+				Description: "CPU % threshold to scale in. Required when is_autoscale is true; omit in load-balancer mode. Immutable.",
 				PlanModifiers: []planmodifier.Int64{
 					int64planmodifier.RequiresReplace(),
 				},
@@ -146,6 +160,34 @@ func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequ
 					boolplanmodifier.UseStateForUnknown(),
 				},
 			},
+			"loadbalancer_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "Load balancer to register the group's instances with. Required when has_load_balancer is true. Immutable.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"loadbalancer_pool_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "Pool within loadbalancer_id to add members to. Required when has_load_balancer is true. Immutable.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"subnet_id": schema.StringAttribute{
+				Optional:    true,
+				Description: "Subnet the scaled instances are placed in. Required when has_load_balancer is true. Immutable.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"port_number": schema.Int64Attribute{
+				Optional:    true,
+				Description: "Port the pool members listen on. Required when has_load_balancer is true. Immutable.",
+				PlanModifiers: []planmodifier.Int64{
+					int64planmodifier.RequiresReplace(),
+				},
+			},
 			"vpc_id": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
@@ -156,6 +198,64 @@ func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequ
 			},
 		},
 	}
+}
+
+// ValidateConfig enforces the split between the two shapes the API accepts.
+// Without it a config that omits min_size in autoscale mode reaches the API as
+// min_size=0 and comes back as an opaque 500.
+func (r *AutoscaleGroupResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg AutoscaleGroupResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	resp.Diagnostics.Append(validateAutoscaleGroupModes(cfg)...)
+}
+
+// validateAutoscaleGroupModes reports the attributes the chosen mode needs but
+// the config left out. Terraform cannot express "required when", so the schema
+// marks them optional and the rule lives here.
+func validateAutoscaleGroupModes(cfg AutoscaleGroupResourceModel) diag.Diagnostics {
+	var diags diag.Diagnostics
+
+	require := func(need map[string]attr.Value, when string) {
+		for _, p := range sortedKeys(need) {
+			if need[p].IsNull() {
+				diags.AddAttributeError(path.Root(p), "Missing Required Attribute",
+					fmt.Sprintf("%s is required when %s.", p, when))
+			}
+		}
+	}
+
+	if cfg.IsAutoscale.ValueBool() {
+		require(map[string]attr.Value{
+			"min_size":            cfg.MinSize,
+			"max_size":            cfg.MaxSize,
+			"scale_out_threshold": cfg.ScaleOutThreshold,
+			"scale_in_threshold":  cfg.ScaleInThreshold,
+		}, "is_autoscale = true")
+	}
+
+	if cfg.HasLoadBalancer.ValueBool() {
+		require(map[string]attr.Value{
+			"loadbalancer_id":      cfg.LoadBalancerID,
+			"loadbalancer_pool_id": cfg.LoadBalancerPoolID,
+			"subnet_id":            cfg.SubnetID,
+			"port_number":          cfg.PortNumber,
+		}, "has_load_balancer = true")
+	}
+	return diags
+}
+
+// sortedKeys keeps the diagnostics in a stable order; map range is random and
+// a shuffling error list is miserable to read and to test.
+func sortedKeys(m map[string]attr.Value) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (r *AutoscaleGroupResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -342,27 +442,56 @@ func buildAutoscaleGroupCreateBody(plan AutoscaleGroupResourceModel, customerID,
 		ltIDVal = n
 	}
 	body := map[string]interface{}{
-		"name":                plan.Name.ValueString(),
-		"launch_template_id":  ltIDVal,
-		"is_autoscale":        plan.IsAutoscale.ValueBool(),
-		"desired_capacity":    plan.DesiredCapacity.ValueInt64(),
-		"min_size":            plan.MinSize.ValueInt64(),
-		"max_size":            plan.MaxSize.ValueInt64(),
-		"scale_out_threshold": plan.ScaleOutThreshold.ValueInt64(),
-		"scale_in_threshold":  plan.ScaleInThreshold.ValueInt64(),
-		"vpc_id":              vpcID,
-		"customer_id":         customerID,
+		"name":               plan.Name.ValueString(),
+		"launch_template_id": ltIDVal,
+		"is_autoscale":       plan.IsAutoscale.ValueBool(),
+		"desired_capacity":   plan.DesiredCapacity.ValueInt64(),
+		"vpc_id":             vpcID,
+		"customer_id":        customerID,
 	}
-	// metric_type defaults to "CPU" when not specified.
-	metricType := plan.MetricType.ValueString()
-	if metricType == "" {
-		metricType = "CPU"
+
+	// The API takes one of two shapes. With is_autoscale the group scales on a
+	// metric and carries min/max/thresholds; without it the group is a fixed
+	// pool behind a load balancer and the console sends none of those, but does
+	// send the four load-balancer fields instead. Sending the wrong set is how
+	// the request ends up rejected.
+	if plan.IsAutoscale.ValueBool() {
+		body["min_size"] = plan.MinSize.ValueInt64()
+		body["max_size"] = plan.MaxSize.ValueInt64()
+		body["scale_out_threshold"] = plan.ScaleOutThreshold.ValueInt64()
+		body["scale_in_threshold"] = plan.ScaleInThreshold.ValueInt64()
+		// metric_type defaults to "CPU" when not specified.
+		metricType := plan.MetricType.ValueString()
+		if metricType == "" {
+			metricType = "CPU"
+		}
+		body["metric_type"] = metricType
 	}
-	body["metric_type"] = metricType
+
 	// Only include has_load_balancer when explicitly configured —
 	// avoids silently hard-coding false when the user omits the attribute.
 	if !plan.HasLoadBalancer.IsNull() && !plan.HasLoadBalancer.IsUnknown() {
 		body["has_load_balancer"] = plan.HasLoadBalancer.ValueBool()
+	}
+
+	// Load-balancer mode fields. kong.yaml renames these to camelCase like the
+	// rest, so they go out snake_case here.
+	if v := plan.LoadBalancerID.ValueString(); v != "" {
+		body["loadbalancer_id"] = v
+	}
+	if v := plan.LoadBalancerPoolID.ValueString(); v != "" {
+		body["loadbalancer_pool_id"] = v
+	}
+	if v := plan.SubnetID.ValueString(); v != "" {
+		// subnetId goes out as an integer; the console sends 9935, not "9935".
+		var subnetVal interface{} = v
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			subnetVal = n
+		}
+		body["subnet_id"] = subnetVal
+	}
+	if !plan.PortNumber.IsNull() && !plan.PortNumber.IsUnknown() {
+		body["port_number"] = plan.PortNumber.ValueInt64()
 	}
 	return body
 }

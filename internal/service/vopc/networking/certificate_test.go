@@ -369,3 +369,22 @@ func indexOf(s, sub string) int {
 	}
 	return -1
 }
+
+// A certificate in use reports the load balancers holding it; the id comes back
+// as a number and must survive as a string in state.
+func TestCertItem_DecodesLoadBalancers(t *testing.T) {
+	t.Parallel()
+	var it certItem
+	if err := json.Unmarshal([]byte(`{
+		"id":"11ce9e55","name":"certlb-test","status":"SUCCESS",
+		"loadBalancers":[{"id":934,"name":"certlb-lb"}]
+	}`), &it); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(it.LoadBalancers) != 1 {
+		t.Fatalf("got %d bindings, want 1", len(it.LoadBalancers))
+	}
+	if it.LoadBalancers[0].ID != 934 || it.LoadBalancers[0].Name != "certlb-lb" {
+		t.Errorf("binding = %+v", it.LoadBalancers[0])
+	}
+}

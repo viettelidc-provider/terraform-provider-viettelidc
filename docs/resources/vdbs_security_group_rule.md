@@ -3,7 +3,7 @@ page_title: "viettelidc_vdbs_security_group_rule Resource - viettelidc"
 subcategory: "Database Service (VDBS)"
 description: |-
   Provides a VDBS Security Group Rule resource to manage inbound rules for Database Service.
-  Note: VDBS currently only supports managing inbound rules.
+  **Note:** VDBS currently only supports managing inbound rules.
 ---
 
 # viettelidc_vdbs_security_group_rule (Resource)

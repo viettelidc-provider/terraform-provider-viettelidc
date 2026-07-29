@@ -2,19 +2,19 @@
 page_title: "viettelidc_ovpc_instance Data Source - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  Look up a ViettelIDC Instance by id.
+  Look up a ViettelIDC Instance by id or by name. Exactly one of id / name must be set.
 ---
 
 # viettelidc_ovpc_instance (Data Source)
 
-Look up a ViettelIDC Instance by id.
+Look up a ViettelIDC Instance by id or by name. Exactly one of `id` / `name` must be set.
 
 ## Example Usage
 
 ```terraform
 data "viettelidc_ovpc_instance" "vm" {
   id     = "vm-id"
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
@@ -23,17 +23,17 @@ data "viettelidc_ovpc_instance" "vm" {
 
 ### Optional
 
+- `id` (String) Instance ID. Mutually optional with name.
+- `name` (String) Instance name. Mutually optional with id.
 - `vpc_id` (String)
 
 ### Read-Only
 
 - `availability_zone` (String)
 - `cpu` (Number)
-- `id` (String) The ID of this resource.
 - `image_id` (String)
 - `image_name` (String)
 - `ip_address` (String)
 - `memory` (Number)
-- `name` (String)
 - `security_group_ids` (List of String)
 - `status` (String)

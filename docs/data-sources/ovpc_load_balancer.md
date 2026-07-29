@@ -2,19 +2,19 @@
 page_title: "viettelidc_ovpc_load_balancer Data Source - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  Lookup a Load Balancer by ID or name in a VPC.
+  Lookup a Load Balancer by ID, name or IP address in a VPC.
 ---
 
 # viettelidc_ovpc_load_balancer (Data Source)
 
-Lookup a Load Balancer by ID or name in a VPC.
+Lookup a Load Balancer by ID, name or IP address in a VPC.
 
 ## Example Usage
 
 ```terraform
 data "viettelidc_ovpc_load_balancer" "web" {
   name   = "web-lb"
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
@@ -23,8 +23,9 @@ data "viettelidc_ovpc_load_balancer" "web" {
 
 ### Optional
 
-- `id` (String) Load Balancer ID (vttLoadBalancerId). Either 'id' or 'name' must be specified.
-- `name` (String) Name of the Load Balancer to look up. Either 'id' or 'name' must be specified.
+- `id` (String) Load Balancer ID (vttLoadBalancerId). One of 'id', 'name' or 'ip_address' must be specified.
+- `ip_address` (String) Private IP the Load Balancer listens on. Can also be used to look one up.
+- `name` (String) Name of the Load Balancer to look up. One of 'id', 'name' or 'ip_address' must be specified.
 - `vpc_id` (String) VPC ID to search within. Uses provider default if not specified.
 
 ### Read-Only
@@ -32,13 +33,36 @@ data "viettelidc_ovpc_load_balancer" "web" {
 - `admin_state_up` (Boolean) Administrative state of the Load Balancer.
 - `description` (String) Description of the Load Balancer.
 - `floating_ip_id` (String) ID of the floating IP assigned to the Load Balancer.
+- `health_monitors` (Attributes List) Health monitors attached to the Load Balancer's pools. (see [below for nested schema](#nestedatt--health_monitors))
+- `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
 - `loadbalancer_type` (String) Type of the Load Balancer.
+- `members` (Attributes List) Pool members currently behind the Load Balancer. Unlike the resource's pool_members, which records what was asked for at creation, this is what the API reports right now. (see [below for nested schema](#nestedatt--members))
 - `operating_status` (String) Operating status of the Load Balancer.
 - `package_type` (String) Package type of the Load Balancer.
 - `pools` (List of Object) List of pools associated with the Load Balancer. (see [below for nested schema](#nestedatt--pools))
+- `provisioning_status` (String) Provisioning status of the Load Balancer.
 - `status` (String) Current status of the Load Balancer.
 - `subnet_id` (String) ID of the subnet where the Load Balancer is placed.
+
+<a id="nestedatt--health_monitors"></a>
+### Nested Schema for `health_monitors`
+
+Read-Only:
+
+- `delay` (Number) Seconds between checks.
+- `id` (String) Health monitor ID.
+- `max_retries` (Number) Successes needed to mark a member up.
+- `max_retries_down` (Number) Failures needed to mark a member down.
+- `name` (String) Monitor name.
+- `operating_status` (String) Operating status.
+- `pool_id` (String) Pool the monitor checks.
+- `pool_name` (String) Pool name.
+- `provisioning_status` (String) Provisioning status.
+- `status` (String) Monitor status.
+- `timeout` (Number) Seconds before a check times out.
+- `type` (String) Check type, for example PING.
+
 
 <a id="nestedatt--listeners"></a>
 ### Nested Schema for `listeners`
@@ -53,6 +77,25 @@ Read-Only:
 - `x_forwarded_for` (Boolean)
 - `x_forwarded_port` (Boolean)
 - `x_forwarded_proto` (Boolean)
+
+
+<a id="nestedatt--members"></a>
+### Nested Schema for `members`
+
+Read-Only:
+
+- `backup` (Boolean) Whether this is a backup member.
+- `id` (String) Member ID.
+- `ip_address` (String) Member IP.
+- `name` (String) Member name, usually the VM name.
+- `operating_status` (String) Operating status.
+- `pool_id` (String) Pool the member belongs to.
+- `pool_name` (String) Pool name.
+- `port` (Number) Port traffic is forwarded to.
+- `provisioning_status` (String) Provisioning status.
+- `status` (String) Member status.
+- `subnet_id` (String) Subnet the member sits in.
+- `weight` (Number) Load balancing weight.
 
 
 <a id="nestedatt--pools"></a>

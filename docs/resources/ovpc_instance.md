@@ -2,12 +2,12 @@
 page_title: "viettelidc_ovpc_instance Resource - viettelidc"
 subcategory: "Virtual Private Cloud (OVPC)"
 description: |-
-  ViettelIDC Compute Instance (VM).
+  ViettelIDC Compute Instance (VM). NOTE: starting and stopping a VM is not exposed as a Terraform attribute. The API has a stop endpoint (used internally when a resize or a delete needs the VM powered off) but no start endpoint is routed on the gateway, so a power_state attribute could only ever turn a VM off, never back on. Use the portal to power VMs on and off until a start endpoint exists.
 ---
 
 # viettelidc_ovpc_instance (Resource)
 
-ViettelIDC Compute Instance (VM).
+ViettelIDC Compute Instance (VM). NOTE: starting and stopping a VM is not exposed as a Terraform attribute. The API has a stop endpoint (used internally when a resize or a delete needs the VM powered off) but no start endpoint is routed on the gateway, so a power_state attribute could only ever turn a VM off, never back on. Use the portal to power VMs on and off until a start endpoint exists.
 
 ## Example Usage
 
@@ -17,13 +17,12 @@ resource "viettelidc_ovpc_instance" "vm" {
   subnet_id          = viettelidc_ovpc_subnet.private.id
   admin_pass         = "MySecretPass123!"
   cpu                = 2
-  memory             = 4      # GB
-  storage            = 40     # GiB
+  memory             = 4096
   storage_type       = "SSD"
   key_pair_name      = viettelidc_ovpc_key_pair.deploy.key_name
   security_group_ids = [viettelidc_ovpc_security_group.web.id]
   availability_zone  = "HN1"
-  vpc_id             = viettelidc_ovpc_vpc.main.id
+  vpc_id             = data.viettelidc_ovpc_vpc.main.id
 }
 ```
 
@@ -42,10 +41,11 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `availability_zone` (String) Availability zone.
 - `cpu` (Number) Number of vCPUs.
 - `instance_type_id` (Number) Instance type (package) integer ID.
-- `key_pair_name` (String) Key pair name to inject into the instance.
+- `key_pair_id` (String) Key pair ID to inject into the instance. Resolved from key_pair_name when omitted — the create endpoint needs the id, and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).
+- `key_pair_name` (String) Key pair name to inject into the instance. Only works when the template reports ssh_key_enabled = true (see viettelidc_ovpc_vm_templates); on a template with ssh_key_enabled = false it is ignored and the instance takes a fixed login, so set admin_pass instead.
 - `memory` (Number) RAM in GB.
 - `security_group_ids` (List of String) List of Security Group IDs to attach.
-- `storage_type` (String) Root volume storage type: `"SSD"` or `"HDD"`. Defaults to `"HDD"`.
+- `storage_type` (String) Root volume storage type: "SSD" or "HDD". Defaults to "HDD".
 - `vpc_id` (String) VPC ID.
 
 ### Read-Only

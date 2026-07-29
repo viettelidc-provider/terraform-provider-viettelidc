@@ -68,8 +68,10 @@ func (r *NatGatewayResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Description: "Human-readable NAT Gateway name.",
 			},
 			"subnet_id": schema.StringAttribute{
-				Required:    true,
-				Description: "ID of the subnet where the NAT Gateway will be placed.",
+				Required: true,
+				Description: "ID of the subnet where the NAT Gateway will be placed. Must be a private " +
+					"subnet (is_public_zone = false); the NAT Gateway is what gives a private subnet " +
+					"outbound internet, so attaching it to a public subnet is rejected.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -166,7 +168,7 @@ func (r *NatGatewayResource) Create(ctx context.Context, req resource.CreateRequ
 	plan.VpcID = types.StringValue(vpcID)
 
 	// Poll until the NAT Gateway reaches a terminal ready state and report to user.
-	if err := r.pollReady(ctx, &plan, 5*time.Minute); err != nil {
+	if err := r.pollReady(ctx, &plan, asyncOpTimeout); err != nil {
 		resp.Diagnostics.AddError("NAT Gateway did not become ready", err.Error())
 		return
 	}

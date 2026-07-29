@@ -15,6 +15,37 @@ description: |-
 {{tffile .ExampleFile }}
 {{- end }}
 
+## Required attributes per mode
+
+Terraform cannot mark an attribute required only under a condition, so the
+attributes below are declared optional and the rule is enforced when the plan is
+built. Leaving one out is an error, not a default.
+
+| Attribute | `is_autoscale = true` | `has_load_balancer = true` |
+|---|---|---|
+| `min_size` | **required** | do not set |
+| `max_size` | **required** | do not set |
+| `scale_out_threshold` | **required** | do not set |
+| `scale_in_threshold` | **required** | do not set |
+| `metric_type` | optional, defaults to `CPU` | do not set |
+| `loadbalancer_id` | — | **required** |
+| `loadbalancer_pool_id` | — | **required** |
+| `subnet_id` | — | **required** |
+| `port_number` | — | **required** |
+
+`loadbalancer_id` and `loadbalancer_pool_id` come from the load balancer itself,
+whether Terraform manages it or not:
+
+```terraform
+data "viettelidc_ovpc_load_balancer" "web" {
+  name   = "web-lb"
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
+}
+
+# ... loadbalancer_id      = data.viettelidc_ovpc_load_balancer.web.id
+# ... loadbalancer_pool_id = data.viettelidc_ovpc_load_balancer.web.pools[0].id
+```
+
 {{ .SchemaMarkdown | trimspace }}
 
 {{- if .HasImport }}

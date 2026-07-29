@@ -20,6 +20,13 @@ import (
 	"terraform-provider-viettelidc/internal/service/vopc/providerdata"
 )
 
+// asyncOpTimeout bounds the polls that wait for an async CSA operation to land
+// (delete disappearing, attach/detach settling, an IP finishing allocation).
+// It was 2 minutes and that was too tight: a real destroy hit "NIC did not
+// disappear after delete" while the NIC was in fact already gone on the next
+// refresh. Resources with their own budget (instance, volume) keep it.
+const asyncOpTimeout = 10 * time.Minute
+
 // callAPI performs a POST to a routed CSA endpoint, parses the standard
 // CSA envelope, and returns it. On transport error, parse error, or non-success
 // CSA code, an error diag is appended and the second return slot is non-empty.
@@ -139,6 +146,41 @@ func isNotFoundMessage(msg string) bool {
 		strings.Contains(m, "not exist") ||
 		strings.Contains(m, "no such") ||
 		strings.Contains(m, "does not exist")
+}
+
+// isBusyMessage returns true when CSA refuses because the resource is still
+// mid-operation — ERROR_POOL_IS_IN_OTHER_PROCESSING and friends. This is a
+// "come back later", not a failure: a destroy that hit it succeeded in 2s on
+// the next attempt.
+func isBusyMessage(msg string) bool {
+	m := strings.ToUpper(msg)
+	return strings.Contains(m, "IN_OTHER_PROCESSING") ||
+		strings.Contains(m, "IS_PROCESSING") ||
+		strings.Contains(m, "IN_PROGRESS")
+}
+
+// callAPIRetryBusy is callAPI plus a wait-and-retry while the API says the
+// resource is busy. Callers that would otherwise surface a transient
+// "still processing" as a hard error should use this instead.
+func callAPIRetryBusy(ctx context.Context, c *client.Client, path string, body map[string]interface{}, timeout time.Duration) (*client.APIResponse, diag.Diagnostics) {
+	deadline := time.Now().Add(timeout)
+	for {
+		apiResp, diags := callAPI(ctx, c, path, body)
+		if !diags.HasError() || apiResp == nil || !isBusyMessage(apiResp.Message) {
+			return apiResp, diags
+		}
+		if time.Now().After(deadline) {
+			return apiResp, diags
+		}
+		tflog.Debug(ctx, "resource busy, retrying", map[string]interface{}{
+			"path": path, "message": apiResp.Message,
+		})
+		select {
+		case <-ctx.Done():
+			return apiResp, diags
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // isNotAttachedMessage returns true when CSA reports a NIC was not attached

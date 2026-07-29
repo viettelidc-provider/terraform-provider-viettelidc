@@ -51,7 +51,7 @@ func (r *RouteTableResource) Metadata(_ context.Context, req resource.MetadataRe
 
 func (r *RouteTableResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "ViettelIDC Route Table. NOTE: The API has no delete endpoint; destroying this resource removes it from Terraform state only.",
+		Description: "ViettelIDC Route Table. Destroying this resource calls the API delete endpoint and removes the route table for real.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed:    true,

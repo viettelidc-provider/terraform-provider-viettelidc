@@ -3,7 +3,7 @@ page_title: "viettelidc_vks_node_group Resource - viettelidc"
 subcategory: "Kubernetes Service (VDKS)"
 description: |-
   Provides a VKS Node Group resource.
-  Note: Creation is explicitly disabled via Terraform. Use terraform import to manage existing Node Groups.
+  **Note:** Creation is explicitly disabled via Terraform. Use `terraform import` to manage existing Node Groups.
 ---
 
 # viettelidc_vks_node_group (Resource)

@@ -19,19 +19,93 @@ resource "viettelidc_ovpc_load_balancer" "web" {
   floating_ip_id    = viettelidc_ovpc_floating_ip.fip.id
   loadbalancer_type = "APPLICATION HTTP-HTTPS"
   package_type      = "LB Compact"
-  vpc_id            = viettelidc_ovpc_vpc.main.id
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
   admin_state_up    = true
 
-  pool_members {
-    vm_id  = viettelidc_ovpc_instance.vm1.id
-    port   = 80
-    weight = 1
-  }
+  # pool_members is an attribute list, not a block - note the `=` and the brackets.
+  pool_members = [
+    {
+      vm_id  = viettelidc_ovpc_instance.vm1.id
+      port   = 80
+      weight = 1
+    },
+    {
+      vm_id  = viettelidc_ovpc_instance.vm2.id
+      port   = 80
+      weight = 1
+    },
+  ]
+}
 
-  pool_members {
-    vm_id  = viettelidc_ovpc_instance.vm2.id
-    port   = 80
+# The listener, pool and health check are created along with the load balancer.
+# Left out they default to HTTP:80, ROUND_ROBIN and an HTTP GET / check, which
+# is wrong for anything that is not a web tier.
+resource "viettelidc_ovpc_load_balancer" "tcp" {
+  name              = "db-lb"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "NETWORK TCP-UDP"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  listener_protocol        = "TCP"
+  listener_port            = 5432
+  pool_algorithm           = "LEAST_CONNECTIONS"
+  pool_session_persistence = "SOURCE_IP"
+
+  # Not every listener protocol accepts every check; the API rejects the bad
+  # pairs with LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL.
+  monitor_type  = "PING"
+  monitor_delay = 10
+}
+
+# 3. HTTPS with TLS terminated at the load balancer. The listener protocol must
+# be TERMINATED_HTTPS and certificate_id points at a viettelidc_ovpc_certificate.
+resource "viettelidc_ovpc_load_balancer" "https" {
+  name              = "web-https"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "APPLICATION HTTP-HTTPS"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  listener_protocol = "TERMINATED_HTTPS"
+  listener_port     = 443
+  certificate_id    = viettelidc_ovpc_certificate.web_cert.id
+
+  pool_members = [{
+    vm_id  = viettelidc_ovpc_instance.vm1.id
+    port   = 443
     weight = 1
+  }]
+}
+
+# 4. Attach an extra TLS-terminating listener to a load balancer after the fact.
+# Each additional_listener block is its own listener + pool + members + monitor,
+# created through the same compound-create the console uses for its "attach
+# certificate" flow. Removing a block deletes that listener, its pool (and the
+# pool's members) and its monitor — the primary listener stays.
+resource "viettelidc_ovpc_load_balancer" "multi" {
+  name              = "web-multi"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "APPLICATION HTTP-HTTPS"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  # primary listener: plain HTTP
+  listener_protocol = "HTTP"
+  listener_port     = 80
+  pool_members = [{ vm_id = viettelidc_ovpc_instance.vm1.id, port = 80, weight = 1 }]
+
+  # added listener: HTTPS terminated at the LB with a certificate
+  additional_listener {
+    protocol       = "TERMINATED_HTTPS"
+    port           = 443
+    certificate_id = viettelidc_ovpc_certificate.web_cert.id
+
+    pool_members {
+      vm_id  = viettelidc_ovpc_instance.vm1.id
+      port   = 443
+      weight = 1
+    }
   }
 }
 ```
@@ -48,19 +122,75 @@ resource "viettelidc_ovpc_load_balancer" "web" {
 
 ### Optional
 
+- `additional_listener` (Block List) Extra listeners added to the load balancer after it is created — this is how a TLS-terminating (TERMINATED_HTTPS) listener with a certificate is attached to a running load balancer, the same way the console's "attach certificate" flow does. Each block is its own listener with its own pool, members and health monitor. (see [below for nested schema](#nestedblock--additional_listener))
 - `admin_state_up` (Boolean) Administrative state of the Load Balancer.
-- `description` (String) Description of the Load Balancer.
-- `floating_ip_id` (String) ID of the floating IP to assign to the Load Balancer.
+- `certificate_id` (String) Certificate to terminate TLS with, from viettelidc_ovpc_certificate. Required when listener_protocol is TERMINATED_HTTPS and only valid then. Immutable.
+- `description` (String) Description of the Load Balancer. The API stores an empty string when unset.
+- `floating_ip_id` (String) ID of the floating IP to assign to the Load Balancer. Read back from the detail endpoint so removing it out-of-band shows as drift.
+- `listener_name` (String) Name of the listener created with the Load Balancer. Defaults to <name>-listener.
+- `listener_port` (Number) Port the listener accepts traffic on. Defaults to 80.
+- `listener_protocol` (String) Protocol the listener accepts. TCP or UDP for a NETWORK TCP-UDP Load Balancer; HTTP, HTTPS or TERMINATED_HTTPS for an APPLICATION HTTP-HTTPS one. Use TERMINATED_HTTPS together with certificate_id to terminate TLS at the load balancer. Defaults to HTTP.
+- `monitor_delay` (Number) Seconds between checks. Defaults to 5.
+- `monitor_expected_code` (Number) Status code that counts as healthy. Only used when monitor_type is HTTP or HTTPS. Defaults to 200.
+- `monitor_http_method` (String) HTTP method the check sends: GET, HEAD, POST, PUT, DELETE, OPTIONS, PATCH, TRACE or CONNECT. Only used when monitor_type is HTTP or HTTPS. Defaults to GET.
+- `monitor_max_retries` (Number) Successful checks before a member is put back in rotation. Defaults to 3.
+- `monitor_max_retries_down` (Number) Failed checks before a member is taken out of rotation. Defaults to 3.
+- `monitor_name` (String) Name of the health monitor. Defaults to <name>-health.
+- `monitor_timeout` (Number) Seconds before a check times out. Defaults to 5.
+- `monitor_type` (String) Health check type: HTTP, HTTPS, PING, TCP, TLS-HELLO or UDP-CONNECT. Not every check works with every listener_protocol — the API answers LOADBALANCER_MONITOR_AND_POOL_NOT_VALID_PROTOCOL for pairs it rejects, and which pairs those are is not documented. Defaults to a check derived from listener_protocol.
+- `monitor_url_path` (String) Path the check requests. Only used when monitor_type is HTTP or HTTPS. Defaults to /.
+- `pool_algorithm` (String) How traffic is spread across members: ROUND_ROBIN, LEAST_CONNECTIONS or SOURCE_IP. Defaults to ROUND_ROBIN.
 - `pool_members` (Attributes List) Backend VMs to add as pool members at creation time. Changing this requires replacement. (see [below for nested schema](#nestedatt--pool_members))
+- `pool_name` (String) Name of the pool created with the Load Balancer. Defaults to <name>-pool.
+- `pool_session_persistence` (String) Pin a client to one member: NONE or SOURCE_IP. Defaults to NONE.
 - `vpc_id` (String) VPC ID. Uses provider default if not specified.
 
 ### Read-Only
 
 - `id` (String) Load Balancer ID assigned by the system (vttLoadBalancerId).
+- `ip_address` (String) Private IP the Load Balancer listens on, assigned at creation.
+- `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
 - `operating_status` (String) Operating status of the Load Balancer.
 - `pools` (List of Object) List of pools associated with the Load Balancer. (see [below for nested schema](#nestedatt--pools))
+- `provisioning_status` (String) Provisioning status of the Load Balancer.
 - `status` (String) Current status of the Load Balancer.
+
+<a id="nestedblock--additional_listener"></a>
+### Nested Schema for `additional_listener`
+
+Required:
+
+- `port` (Number) Port the listener accepts traffic on.
+- `protocol` (String) Listener protocol: TCP, UDP, HTTP, HTTPS or TERMINATED_HTTPS. Use TERMINATED_HTTPS with certificate_id to terminate TLS.
+
+Optional:
+
+- `certificate_id` (String) Certificate to terminate TLS with. Required when protocol is TERMINATED_HTTPS.
+- `monitor_type` (String) Health check type. Defaults to a check derived from protocol.
+- `pool_algorithm` (String) ROUND_ROBIN, LEAST_CONNECTIONS or SOURCE_IP. Defaults to ROUND_ROBIN.
+- `pool_members` (Block List) Backend VMs for this listener's pool. (see [below for nested schema](#nestedblock--additional_listener--pool_members))
+- `pool_session_persistence` (String) NONE or SOURCE_IP. Defaults to NONE.
+
+Read-Only:
+
+- `id` (String) Listener ID.
+- `monitor_id` (String) Health monitor ID of this listener.
+- `pool_id` (String) Pool ID of this listener.
+
+<a id="nestedblock--additional_listener--pool_members"></a>
+### Nested Schema for `additional_listener.pool_members`
+
+Required:
+
+- `vm_id` (String) VM ID to add as a pool member.
+
+Optional:
+
+- `port` (Number) Port on the VM (default 80).
+- `weight` (Number) Weight (default 1).
+
+
 
 <a id="nestedatt--pool_members"></a>
 ### Nested Schema for `pool_members`

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -20,7 +21,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
 )
@@ -56,6 +56,7 @@ type InstanceResourceModel struct {
 	StorageType      types.String `tfsdk:"storage_type"`
 	Storage          types.Int64  `tfsdk:"storage"`
 	KeyPairName      types.String `tfsdk:"key_pair_name"`
+	KeyPairID        types.String `tfsdk:"key_pair_id"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
 	SecurityGroupIDs types.List   `tfsdk:"security_group_ids"`
 	AvailabilityZone types.String `tfsdk:"availability_zone"`
@@ -75,7 +76,11 @@ func (r *InstanceResource) Metadata(_ context.Context, req resource.MetadataRequ
 
 func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "ViettelIDC Compute Instance (VM).",
+		Description: "ViettelIDC Compute Instance (VM). " +
+			"NOTE: starting and stopping a VM is not exposed as a Terraform attribute. " +
+			"The API has a stop endpoint (used internally when a resize or a delete needs the VM powered off) " +
+			"but no start endpoint is routed on the gateway, so a power_state attribute could only ever turn a VM off, " +
+			"never back on. Use the portal to power VMs on and off until a start endpoint exists.",
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
 				Computed: true,
@@ -212,8 +217,22 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"key_pair_name": schema.StringAttribute{
-				Optional:    true,
-				Description: "Key pair name to inject into the instance.",
+				Optional: true,
+				Description: "Key pair name to inject into the instance. Only works when the template " +
+					"reports ssh_key_enabled = true (see viettelidc_ovpc_vm_templates); on a template " +
+					"with ssh_key_enabled = false it is ignored and the instance takes a fixed login, so " +
+					"set admin_pass instead.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"key_pair_id": schema.StringAttribute{
+				Optional: true,
+				Computed: true,
+				Description: "Key pair ID to inject into the instance. " +
+					"Resolved from key_pair_name when omitted — the create endpoint needs the id, " +
+					"and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 					stringplanmodifier.RequiresReplace(),
@@ -245,6 +264,22 @@ func (r *InstanceResource) Create(ctx context.Context, req resource.CreateReques
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+
+	// The VM create endpoint needs the key pair's id, not just its name: given a
+	// name alone it tries to create a new key pair and fails with KEY_PAIR_EXISTED.
+	// Resolve the id so `key_pair_name` on its own works, as the docs show it.
+	if plan.KeyPairName.ValueString() != "" && plan.KeyPairID.ValueString() == "" {
+		kpID, err := r.lookupKeyPairID(ctx, plan.KeyPairName.ValueString(), vpcID)
+		if err != nil {
+			resp.Diagnostics.AddError("Cannot resolve key pair", err.Error())
+			return
+		}
+		plan.KeyPairID = types.StringValue(kpID)
+	}
+	// key_pair_id is Computed, so it must never be left unknown after apply.
+	if plan.KeyPairID.IsUnknown() {
+		plan.KeyPairID = types.StringNull()
 	}
 
 	body, diags := r.buildCreateBody(ctx, &plan, vpcID)
@@ -364,6 +399,17 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 			"customer_id": r.customerID,
 		}
 		if _, diags := callAPI(ctx, r.client, pathVMUpdate, updateBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+
+		// Explicitly start the VM after resize so it can become POWERED_ON
+		startBody := map[string]interface{}{
+			"instance_id": vmIDInt,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMStart, startBody); diags.HasError() {
 			resp.Diagnostics.Append(diags...)
 			return
 		}
@@ -559,7 +605,17 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 		"storageType": storageType,
 	}
 	if v := m.KeyPairName.ValueString(); v != "" {
-		body["key_pair_name"] = v
+		kp := map[string]interface{}{
+			"keypairName": v,
+		}
+		// Without an id the API reads keyPair as "create a new key pair with this
+		// name" and rejects the request with KEY_PAIR_EXISTED. The caller resolves
+		// the id from the name when the user did not supply one.
+		if kpID := m.KeyPairID.ValueString(); kpID != "" {
+			kpIDInt, _ := strconv.ParseInt(kpID, 10, 64)
+			kp["id"] = kpIDInt
+		}
+		body["keyPair"] = kp
 	}
 	if !m.InstanceTypeID.IsNull() && !m.InstanceTypeID.IsUnknown() && m.InstanceTypeID.ValueInt64() > 0 {
 		instanceType["id"] = m.InstanceTypeID.ValueInt64()
@@ -629,8 +685,47 @@ func (r *InstanceResource) readInto(ctx context.Context, m *InstanceResourceMode
 	}
 	if err := mapVMResponse(ctx, apiResp, m); err != nil {
 		diags.AddError("Instance detail decode failed", err.Error())
+		return true
 	}
+	r.correctRootNic(ctx, m, vpcID)
 	return true
+}
+
+// correctRootNic overwrites root_nic_id / ip_address with the instance's real
+// primary interface. vm/detail lists NICs in an order that changes once another
+// NIC is attached, and its ipPrivate follows the same wrong entry, so the only
+// dependable source is the isRootNic flag on the NIC list. Best-effort: on any
+// lookup failure the values from vm/detail are left as they were.
+func (r *InstanceResource) correctRootNic(ctx context.Context, m *InstanceResourceModel, vpcID string) {
+	apiResp, diags := callAPI(ctx, r.client, pathNicList, map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": r.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	})
+	if diags.HasError() {
+		return
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return
+	}
+	vmID := m.ID.ValueString()
+	for _, raw := range items {
+		if asString(raw, "vttEntityType") != "virtual_machine" || asIDString(raw, "vttEntityValue") != vmID {
+			continue
+		}
+		if !asBool(raw, "isRootNic") {
+			continue
+		}
+		if id := asIDString(raw, "id"); id != "" {
+			m.RootNicID = types.StringValue(id)
+		}
+		if ip := asString(raw, "ipAddress"); ip != "" && ip != "default" {
+			m.IPAddress = types.StringValue(ip)
+		}
+		return
+	}
 }
 
 func extractVMID(resp *client.APIResponse) (string, error) {
@@ -697,6 +792,11 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 	if m.InstanceTypeID.IsUnknown() {
 		m.InstanceTypeID = types.Int64Null()
 	}
+	// Same for KeyPairID: the VM detail response does not carry it, and it is
+	// Computed, so an unknown here would fail the apply-consistency check.
+	if m.KeyPairID.IsUnknown() {
+		m.KeyPairID = types.StringNull()
+	}
 
 	// Extract image info.
 	if image, ok := data["image"].(map[string]interface{}); ok {
@@ -704,7 +804,11 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 		m.ImageName = types.StringValue(asString(image, "name"))
 	}
 
-	// Extract primary IP and root NIC ID from networks[0].
+	// Provisional primary IP / root NIC from networks[0]. Note that networks[] is
+	// NOT ordered root-first — attaching a second NIC pushes it ahead of the root
+	// NIC — so readInto corrects this afterwards using the isRootNic flag from the
+	// NIC list. This matters: root_nic_id is what the docs tell you to pass to a
+	// Floating IP association.
 	if networks, ok := data["networks"].([]interface{}); ok && len(networks) > 0 {
 		if net, ok := networks[0].(map[string]interface{}); ok {
 			m.IPAddress = types.StringValue(asString(net, "ipAddress"))
@@ -742,13 +846,13 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 // If the API call fails or the name cannot be found, it falls back to returning the sgID.
 func (r *InstanceResource) lookupSGName(ctx context.Context, sgID string, vpcID string) string {
 	sgIDInt, _ := strconv.ParseInt(sgID, 10, 64)
-	
+
 	body := map[string]interface{}{
 		"security_group_id": sgIDInt,
 		"vpc_id":            vpcID,
 		"customer_id":       r.customerID,
 	}
-	
+
 	if apiResp, d := callAPI(ctx, r.client, pathSGDetail, body); !d.HasError() && apiResp != nil {
 		var raw map[string]interface{}
 		if err := json.Unmarshal(apiResp.Data, &raw); err == nil {
@@ -758,4 +862,35 @@ func (r *InstanceResource) lookupSGName(ctx context.Context, sgID string, vpcID 
 		}
 	}
 	return sgID
+}
+
+// lookupKeyPairID resolves a key pair name to its id. VM create needs the id;
+// with only a name the API tries to create a new key pair (KEY_PAIR_EXISTED).
+func (r *InstanceResource) lookupKeyPairID(ctx context.Context, name, vpcID string) (string, error) {
+	body := map[string]interface{}{
+		"vpc_id":      vpcID,
+		"customer_id": r.customerID,
+		"pageIndex":   0,
+		"pageSize":    1000,
+	}
+	apiResp, diags := callAPI(ctx, r.client, pathKeyPairList, body)
+	if diags.HasError() {
+		msg := "unknown error"
+		if errs := diags.Errors(); len(errs) > 0 {
+			msg = errs[0].Detail()
+		}
+		return "", fmt.Errorf("list key pairs: %s", msg)
+	}
+	items, err := decodeSubnetList(apiResp) // shape-generic list decoder
+	if err != nil {
+		return "", fmt.Errorf("decode key pair list: %w", err)
+	}
+	for _, raw := range items {
+		if asString(raw, "keypairName") == name || asString(raw, "name") == name {
+			if id := asIDString(raw, "id"); id != "" {
+				return id, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no key pair named %q in VPC %s", name, vpcID)
 }

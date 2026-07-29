@@ -255,7 +255,7 @@ func TestBuildAutoscaleGroupCreateBody_DefaultMetricType(t *testing.T) {
 	plan := AutoscaleGroupResourceModel{
 		Name:              types.StringValue("asg-2"),
 		LaunchTemplateID:  types.StringValue("lt-1"),
-		IsAutoscale:       types.BoolValue(false),
+		IsAutoscale:       types.BoolValue(true), // metric_type only ships in autoscale mode
 		DesiredCapacity:   types.Int64Value(1),
 		MinSize:           types.Int64Value(1),
 		MaxSize:           types.Int64Value(3),

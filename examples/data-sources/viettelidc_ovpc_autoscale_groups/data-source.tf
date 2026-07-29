@@ -1,5 +1,5 @@
 data "viettelidc_ovpc_autoscale_groups" "all" {
-  vpc_id = viettelidc_ovpc_vpc.main.id
+  vpc_id = data.viettelidc_ovpc_vpc.main.id
 }
 
 output "asg_names" {
