@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	ipAssignStatic  = "STATIC"
+	ipAssignStatic  = "custom" // CSA enum for a user-specified IP; "STATIC" is rejected/ignored by the API.
 	ipAssignDynamic = "auto"
 )
 
@@ -72,7 +72,7 @@ func (r *NetworkInterfaceResource) Schema(_ context.Context, _ resource.SchemaRe
 			"subnet_id": schema.StringAttribute{Required: true, Description: "Subnet to attach the NIC to. Mutable (NIC may move subnets)."},
 			"ip_assign_type": schema.StringAttribute{
 				Required:    true,
-				Description: "STATIC or auto. Immutable.",
+				Description: "custom (user-specified IP) or auto. Immutable.",
 				Validators: []validator.String{
 					stringvalidator.OneOf(ipAssignStatic, ipAssignDynamic),
 				},
@@ -81,7 +81,7 @@ func (r *NetworkInterfaceResource) Schema(_ context.Context, _ resource.SchemaRe
 			"ip_address": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
-				Description: "IP address. Required when ip_assign_type=STATIC; assigned by the system when auto.",
+				Description: "IP address. Required when ip_assign_type=custom; assigned by the system when auto.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
