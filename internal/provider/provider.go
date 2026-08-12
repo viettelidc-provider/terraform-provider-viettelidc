@@ -317,6 +317,7 @@ func (p *viettelidcProvider) DataSources(_ context.Context) []func() datasource.
 		iacNetworking.NewSecurityGroupDataSource,
 		iacNetworking.NewNetworkInterfaceDataSource,
 		iacNetworking.NewNetworkInterfacesDataSource,
+		iacNetworking.NewVolumeDataSource,
 		iacNetworking.NewRouteTableDataSource,
 		iacNetworking.NewInternetGatewayDataSource,
 		iacNetworking.NewInternetGatewaysDataSource,
