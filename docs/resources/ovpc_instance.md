@@ -17,11 +17,11 @@ resource "viettelidc_ovpc_instance" "vm" {
   subnet_id          = viettelidc_ovpc_subnet.private.id
   admin_pass         = "MySecretPass123!"
   cpu                = 2
-  memory             = 4096
+  memory             = 4 # GB
+  storage            = 40 # GiB
   storage_type       = "SSD"
   key_pair_name      = viettelidc_ovpc_key_pair.deploy.key_name
   security_group_ids = [viettelidc_ovpc_security_group.web.id]
-  availability_zone  = "HN1"
   vpc_id             = data.viettelidc_ovpc_vpc.main.id
 }
 ```
@@ -38,7 +38,6 @@ resource "viettelidc_ovpc_instance" "vm" {
 ### Optional
 
 - `admin_pass` (String, Sensitive) Initial admin password.
-- `availability_zone` (String) Availability zone.
 - `cpu` (Number) Number of vCPUs.
 - `instance_type_id` (Number) Instance type (package) integer ID.
 - `key_pair_id` (String) Key pair ID to inject into the instance. Resolved from key_pair_name when omitted — the create endpoint needs the id, and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).
