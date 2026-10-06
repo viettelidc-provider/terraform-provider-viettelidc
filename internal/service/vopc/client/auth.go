@@ -36,7 +36,7 @@ type LoginCredentials struct {
 	DomainId string // required for IAM_USER, ignored for ROOT_USER
 }
 
-func oauthExchange(ctx context.Context, httpClient *http.Client, baseURL, oldToken string) (string, error) {
+func OAuthExchange(ctx context.Context, httpClient *http.Client, baseURL, oldToken string) (string, error) {
 	form := url.Values{}
 	form.Set("grant_type", "cmp_internal")
 	form.Set("code", oldToken)
@@ -139,7 +139,7 @@ func LoginWithPassword(ctx context.Context, httpClient *http.Client, baseURL str
 	}
 
 	oldToken = env.Data
-	accessToken, err = oauthExchange(ctx, httpClient, baseURL, oldToken)
+	accessToken, err = OAuthExchange(ctx, httpClient, baseURL, oldToken)
 	if err != nil {
 		return "", "", fmt.Errorf("login oauth exchange: %w", err)
 	}
@@ -278,7 +278,7 @@ func ExchangeATMForCMP(ctx context.Context, httpClient *http.Client, baseURL str
 	}
 
 	oldToken = env.Data
-	accessToken, err = oauthExchange(ctx, httpClient, baseURL, oldToken)
+	accessToken, err = OAuthExchange(ctx, httpClient, baseURL, oldToken)
 	if err != nil {
 		return "", "", fmt.Errorf("via-atm-login oauth exchange: %w", err)
 	}

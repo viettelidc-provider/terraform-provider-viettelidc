@@ -270,17 +270,13 @@ func (p *viettelidcProvider) Configure(ctx context.Context, req provider.Configu
 		iacData.CustomerID = configuration.CustomerId
 		voksConfig = configuration
 
-		// ── Also login to IaC API as IAM user so IaC resources are accessible ──
-		oldToken, accessToken, iacErr := iac_client.LoginWithPassword(ctx, &http.Client{}, iacBaseURL, iac_client.LoginCredentials{
-			Username: username,
-			Password: password,
-			UserType: "IAM_USER",
-			DomainId: domainId,
-		})
+		// ── Also prepare IaC API client for IAM user using the authenticated token ──
+		oldToken := configuration.AccessToken
+		accessToken, iacErr := iac_client.OAuthExchange(ctx, &http.Client{}, iacBaseURL, oldToken)
 		if iacErr != nil {
 			resp.Diagnostics.AddError(
-				"IaC Login Failed (IAM user)",
-				"Could not authenticate IAM user with IaC API: "+iacErr.Error(),
+				"IaC OAuth Exchange Failed (IAM user)",
+				"Could not exchange IAM token with IaC OAuth API: "+iacErr.Error(),
 			)
 			return
 		}
