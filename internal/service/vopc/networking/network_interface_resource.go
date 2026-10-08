@@ -391,6 +391,12 @@ func fillNicFromList(data map[string]interface{}, m *NetworkInterfaceResourceMod
 		ip = ""
 	}
 	m.IpAddress = types.StringValue(ip)
+	// description is not returned by NIC list/detail; preserve plan/state value or set null.
+	if v := asString(data, "description"); v != "" {
+		m.Description = types.StringValue(v)
+	} else if m.Description.IsUnknown() {
+		m.Description = types.StringNull()
+	}
 }
 
 // ---------- Pure helpers ----------

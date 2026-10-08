@@ -11,10 +11,22 @@ Allocates a ViettelIDC Floating IP and associates it with a VM instance and NIC.
 
 ## Example Usage
 
+### Allocate and associate to an instance
+
 ```terraform
 resource "viettelidc_ovpc_floating_ip" "fip" {
   instance_id          = viettelidc_ovpc_instance.vm.id
   network_interface_id = viettelidc_ovpc_instance.vm.root_nic_id
+  vpc_id               = data.viettelidc_ovpc_vpc.main.id
+}
+```
+
+### Associate an existing Floating IP to a Network Interface
+
+```terraform
+resource "viettelidc_ovpc_floating_ip" "bastion" {
+  id                   = "5728"
+  network_interface_id = viettelidc_ovpc_network_interface.bastion.id
   vpc_id               = data.viettelidc_ovpc_vpc.main.id
 }
 ```
