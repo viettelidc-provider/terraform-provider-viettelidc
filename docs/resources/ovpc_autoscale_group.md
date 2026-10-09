@@ -17,8 +17,8 @@ ViettelIDC Autoscale Group. The API accepts two shapes: with is_autoscale the gr
 # 1. Autoscale mode — the group grows and shrinks on a metric.
 resource "viettelidc_ovpc_autoscale_group" "web" {
   name                = "web-asg"
+  description         = "Auto scaling group for web tier"
   launch_template_id  = viettelidc_ovpc_launch_template.web.id
-  is_autoscale        = true
   desired_capacity    = 2
   min_size            = 1
   max_size            = 5
@@ -33,9 +33,9 @@ resource "viettelidc_ovpc_autoscale_group" "web" {
 # balancer. min_size / max_size / the thresholds do not apply here and are not
 # sent; supplying them is a config error.
 resource "viettelidc_ovpc_autoscale_group" "fixed_pool" {
-  name               = "web-pool"
-  launch_template_id = viettelidc_ovpc_launch_template.web.id
-  is_autoscale       = false
+  name                 = "web-pool"
+  description          = "Fixed pool behind web load balancer"
+  launch_template_id   = viettelidc_ovpc_launch_template.web.id
   desired_capacity   = 1
 
   has_load_balancer    = true
@@ -90,6 +90,7 @@ data "viettelidc_ovpc_load_balancer" "web" {
 - `name` (String) Autoscale Group name. Immutable.
 
 ### Optional
+- `description` (String) Description for the autoscale group. Immutable.
 
 - `has_load_balancer` (Boolean) Whether the ASG is attached to a Load Balancer (default: false). Immutable.
 - `loadbalancer_id` (String) Load balancer to register the group's instances with. Required when has_load_balancer is true. Immutable.

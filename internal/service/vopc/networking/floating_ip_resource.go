@@ -191,14 +191,26 @@ func (r *FloatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 		}
 	}
 
-	// Step 2: Associate the FIP with the VM instance and NIC (optional).
-	if !plan.InstanceID.IsNull() && plan.InstanceID.ValueString() != "" {
+	// Step 2: Associate the FIP with the NIC and/or VM instance (optional).
+	hasNIC := !plan.NetworkInterfaceID.IsNull() && plan.NetworkInterfaceID.ValueString() != ""
+	hasInstance := !plan.InstanceID.IsNull() && plan.InstanceID.ValueString() != ""
+
+	if hasNIC || hasInstance {
 		assocBody := map[string]interface{}{
-			"floating_ip_id":       floatingID,
-			"instance_id":          plan.InstanceID.ValueString(),
-			"network_interface_id": plan.NetworkInterfaceID.ValueString(),
-			"vpc_id":               vpcID,
-			"customer_id":          r.customerID,
+			"floating_ip_id":        floatingID,
+			"vttFloatingId":         parseInt(floatingID),
+			"vpc_id":                vpcID,
+			"vpcId":                 parseInt(vpcID),
+			"customer_id":           r.customerID,
+			"customerId":            parseInt(r.customerID),
+		}
+		if hasNIC {
+			assocBody["network_interface_id"] = plan.NetworkInterfaceID.ValueString()
+			assocBody["vttNetworkInterfaceId"] = plan.NetworkInterfaceID.ValueString()
+		}
+		if hasInstance {
+			assocBody["instance_id"] = plan.InstanceID.ValueString()
+			assocBody["vttVmId"] = parseInt(plan.InstanceID.ValueString())
 		}
 		if _, assocDiags := callAPI(ctx, r.client, pathFloatingIPAssociate, assocBody); assocDiags.HasError() {
 			// Association failed. Best-effort disassociate, but note that the API has no
@@ -206,8 +218,11 @@ func (r *FloatingIPResource) Create(ctx context.Context, req resource.CreateRequ
 			// is not in state, so Terraform cannot clean it up on a later run.
 			cleanupBody := map[string]interface{}{
 				"floating_ip_id": floatingID,
+				"vttFloatingId":  parseInt(floatingID),
 				"vpc_id":         vpcID,
+				"vpcId":          parseInt(vpcID),
 				"customer_id":    r.customerID,
+				"customerId":     parseInt(r.customerID),
 			}
 			_, _ = callAPI(ctx, r.client, pathFloatingIPDisassociate, cleanupBody) // best-effort
 			if plan.ID.IsNull() || plan.ID.ValueString() == "" {
@@ -273,12 +288,18 @@ func (r *FloatingIPResource) Delete(ctx context.Context, req resource.DeleteRequ
 			state.ID.ValueString(), state.PublicIP.ValueString()),
 	)
 
-	// Only disassociate if the FIP was associated with a VM instance.
-	if !state.InstanceID.IsNull() && state.InstanceID.ValueString() != "" {
+	// Disassociate if the FIP was associated with a NIC or VM instance.
+	hasNIC := !state.NetworkInterfaceID.IsNull() && state.NetworkInterfaceID.ValueString() != ""
+	hasInstance := !state.InstanceID.IsNull() && state.InstanceID.ValueString() != ""
+
+	if hasNIC || hasInstance {
 		body := map[string]interface{}{
 			"floating_ip_id": state.ID.ValueString(),
+			"vttFloatingId":  parseInt(state.ID.ValueString()),
 			"vpc_id":         state.VpcID.ValueString(),
+			"vpcId":          parseInt(state.VpcID.ValueString()),
 			"customer_id":    r.customerID,
+			"customerId":     parseInt(r.customerID),
 		}
 		apiResp, diags := callAPI(ctx, r.client, pathFloatingIPDisassociate, body)
 		if diags.HasError() {
@@ -359,9 +380,13 @@ func mapFloatingIPResponse(resp *client.APIResponse, m *FloatingIPResourceModel)
 	}
 	if vmID := asIDString(data, "vttVmId"); vmID != "" {
 		m.InstanceID = types.StringValue(vmID)
+	} else if m.InstanceID.IsUnknown() {
+		m.InstanceID = types.StringNull()
 	}
 	if nicID := asString(data, "vttNetworkInterfaceId"); nicID != "" {
 		m.NetworkInterfaceID = types.StringValue(nicID)
+	} else if m.NetworkInterfaceID.IsUnknown() {
+		m.NetworkInterfaceID = types.StringNull()
 	}
 	if vpcID := asIDString(data, "vpcId"); vpcID != "" {
 		m.VpcID = types.StringValue(vpcID)

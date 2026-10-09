@@ -47,7 +47,7 @@ func NewClient(baseURL, token string) *Client {
 // matches the live CMP frontend behaviour observed in HAR captures.
 func NewClientWithTokens(baseURL, oldToken, accessToken string) *Client {
 	return &Client{
-		httpClient:  &http.Client{Timeout: 30 * time.Second},
+		httpClient:  &http.Client{Timeout: 3 * time.Minute},
 		baseURL:     strings.TrimRight(baseURL, "/"),
 		oldToken:    oldToken,
 		accessToken: accessToken,

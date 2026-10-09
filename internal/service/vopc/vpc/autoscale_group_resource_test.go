@@ -256,9 +256,8 @@ func TestUnit_AutoscaleGroupResource_DefaultMetricType(t *testing.T) {
 	}
 }
 
-// Load-balancer mode sends a different set of fields than autoscale mode, and
-// the four LB fields go out camelCased because kong.yaml has no rename for them
-// yet. Both halves of that are easy to break by accident.
+// Load-balancer mode sends a different set of fields than autoscale mode.
+// Both snake_case and camelCase keys are sent for resilience across Kong and direct API calls.
 func TestBuildAutoscaleGroupCreateBody_LoadBalancerMode(t *testing.T) {
 	t.Parallel()
 	plan := AutoscaleGroupResourceModel{
@@ -279,14 +278,25 @@ func TestBuildAutoscaleGroupCreateBody_LoadBalancerMode(t *testing.T) {
 			t.Errorf("%s must not be sent when is_autoscale is false", k)
 		}
 	}
+	// API expects loadbalancer_id and loadbalancer_pool_id as STRINGs.
 	if body["loadbalancer_id"] != "929" || body["loadbalancer_pool_id"] != "2024" {
-		t.Errorf("load balancer ids missing: %v", body)
+		t.Errorf("load balancer ids must be strings: %v", body)
 	}
 	if body["subnet_id"] != int64(9935) {
 		t.Errorf("subnet_id must be an integer, got %#v", body["subnet_id"])
 	}
 	if body["port_number"] != int64(1) {
 		t.Errorf("port_number missing, got %#v", body["port_number"])
+	}
+	// description defaults to empty string.
+	if body["description"] != "" {
+		t.Errorf("description must be empty string, got %#v", body["description"])
+	}
+	// camelCase keys must also be present.
+	for _, k := range []string{"vpcId", "customerId", "launchTemplateId", "isAutoscale", "desiredCapacity", "hasLoadBalancer", "loadbalancerId", "loadbalancerPoolId", "subnetId", "portNumber"} {
+		if _, ok := body[k]; !ok {
+			t.Errorf("missing camelCase key: %s", k)
+		}
 	}
 }
 
@@ -312,6 +322,12 @@ func TestBuildAutoscaleGroupCreateBody_AutoscaleModeOmitsLBFields(t *testing.T) 
 	for _, k := range []string{"loadbalancer_id", "loadbalancer_pool_id", "subnet_id", "port_number"} {
 		if _, ok := body[k]; ok {
 			t.Errorf("%s must not be sent when it is not configured", k)
+		}
+	}
+	// camelCase autoscale keys must also be present.
+	for _, k := range []string{"minSize", "maxSize", "scaleOutThreshold", "scaleInThreshold", "metricType"} {
+		if _, ok := body[k]; !ok {
+			t.Errorf("missing camelCase key: %s", k)
 		}
 	}
 }

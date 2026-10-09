@@ -3,10 +3,9 @@
 
 // Package vpc implements ViettelIDC IaC Phase 4 resources and data sources
 // for autoscaling: Launch Template and Autoscale Group.
-//
-// All resources call API via API Gateway on /terraform/v1/vpc/... paths.
-// The API Gateway rewrites these to /csa/api/v1/vpc/... and
-// renames snake_case body fields to camelCase.
+// All resources call the CSA API directly at /csa/api/v1/vpc/... paths,
+// matching the pattern used by networking resources. Request bodies include
+// both snake_case and camelCase keys for resilience across Kong and direct calls.
 package vpc
 
 import (
@@ -33,7 +32,9 @@ func callAPI(ctx context.Context, c *client.Client, path string, body map[string
 	var diags diag.Diagnostics
 
 	// Convert numeric-looking string IDs to integers so they are forwarded correctly.
-	for _, k := range []string{"id", "vpc_id", "customer_id"} {
+	// Covers: id, vpc_id, customer_id, subnet_id, launch_template_id.
+	// loadbalancer_id and loadbalancer_pool_id are NOT converted — API expects strings.
+	for _, k := range []string{"id", "vpc_id", "customer_id", "subnet_id", "launch_template_id"} {
 		if v, ok := body[k]; ok {
 			if s, isStr := v.(string); isStr {
 				if n, err := strconv.Atoi(s); err == nil {

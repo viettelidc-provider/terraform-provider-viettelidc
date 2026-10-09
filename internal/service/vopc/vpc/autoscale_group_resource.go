@@ -44,6 +44,7 @@ type AutoscaleGroupResource struct {
 type AutoscaleGroupResourceModel struct {
 	ID                types.String `tfsdk:"id"`
 	Name              types.String `tfsdk:"name"`
+	Description       types.String `tfsdk:"description"`
 	LaunchTemplateID  types.String `tfsdk:"launch_template_id"`
 	IsAutoscale       types.Bool   `tfsdk:"is_autoscale"`
 	DesiredCapacity   types.Int64  `tfsdk:"desired_capacity"`
@@ -58,8 +59,8 @@ type AutoscaleGroupResourceModel struct {
 	// Load-balancer mode (is_autoscale = false). See buildAutoscaleGroupCreateBody.
 	LoadBalancerID     types.String `tfsdk:"loadbalancer_id"`
 	LoadBalancerPoolID types.String `tfsdk:"loadbalancer_pool_id"`
-	SubnetID           types.String `tfsdk:"subnet_id"`
-	PortNumber         types.Int64  `tfsdk:"port_number"`
+	SubnetID          types.String `tfsdk:"subnet_id"`
+	PortNumber        types.Int64  `tfsdk:"port_number"`
 }
 
 // NewAutoscaleGroupResource constructs the resource (registered in iac/provider.go).
@@ -89,6 +90,14 @@ func (r *AutoscaleGroupResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"name": schema.StringAttribute{
 				Required:    true,
 				Description: "Autoscale Group name. Immutable.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"description": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Description for the autoscale group. Sent to the API even when empty.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
@@ -355,10 +364,16 @@ func (r *AutoscaleGroupResource) Delete(ctx context.Context, req resource.Delete
 		return
 	}
 
+	asgIDInt, _ := strconv.ParseInt(state.ID.ValueString(), 10, 64)
+	vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+	custIDInt, _ := strconv.ParseInt(r.customerID, 10, 64)
+
 	body := map[string]interface{}{
-		"id":          state.ID.ValueString(),
-		"vpc_id":      vpcID,
-		"customer_id": r.customerID,
+		"id":          asgIDInt,
+		"vpc_id":      vpcIDInt,
+		"vpcId":       vpcIDInt,
+		"customer_id": custIDInt,
+		"customerId":  custIDInt,
 	}
 	apiResp, diags := callAPI(ctx, r.client, pathAutoscaleGroupDelete, body)
 	if diags.HasError() {
@@ -404,9 +419,14 @@ func (r *AutoscaleGroupResource) readInto(ctx context.Context, m *AutoscaleGroup
 		vpcID = r.defaultVpcID
 	}
 
+	vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+	custIDInt, _ := strconv.ParseInt(r.customerID, 10, 64)
+
 	body := map[string]interface{}{
-		"vpc_id":      vpcID,
-		"customer_id": r.customerID,
+		"vpc_id":      vpcIDInt,
+		"vpcId":       vpcIDInt,
+		"customer_id": custIDInt,
+		"customerId":  custIDInt,
 	}
 	apiResp, d := callAPI(ctx, r.client, pathAutoscaleGroupList, body)
 	if d.HasError() {
@@ -441,57 +461,77 @@ func buildAutoscaleGroupCreateBody(plan AutoscaleGroupResourceModel, customerID,
 	if n, err := strconv.ParseInt(ltID, 10, 64); err == nil {
 		ltIDVal = n
 	}
+
+	customerIDInt, _ := strconv.ParseInt(customerID, 10, 64)
+	vpcIDInt, _ := strconv.ParseInt(vpcID, 10, 64)
+
 	body := map[string]interface{}{
-		"name":               plan.Name.ValueString(),
+		"name":        plan.Name.ValueString(),
+		"description": plan.Description.ValueString(), // empty string when not set
+
+		// IDs as both snake_case and camelCase
+		"vpc_id":             vpcIDInt,
+		"vpcId":              vpcIDInt,
+		"customer_id":        customerIDInt,
+		"customerId":         customerIDInt,
 		"launch_template_id": ltIDVal,
+		"launchTemplateId":  ltIDVal,
+
+		// Scalable group params as both cases
 		"is_autoscale":       plan.IsAutoscale.ValueBool(),
+		"isAutoscale":        plan.IsAutoscale.ValueBool(),
 		"desired_capacity":   plan.DesiredCapacity.ValueInt64(),
-		"vpc_id":             vpcID,
-		"customer_id":        customerID,
+		"desiredCapacity":    plan.DesiredCapacity.ValueInt64(),
 	}
 
 	// The API takes one of two shapes. With is_autoscale the group scales on a
 	// metric and carries min/max/thresholds; without it the group is a fixed
 	// pool behind a load balancer and the console sends none of those, but does
-	// send the four load-balancer fields instead. Sending the wrong set is how
-	// the request ends up rejected.
+	// send the four load-balancer fields instead.
 	if plan.IsAutoscale.ValueBool() {
 		body["min_size"] = plan.MinSize.ValueInt64()
+		body["minSize"] = plan.MinSize.ValueInt64()
 		body["max_size"] = plan.MaxSize.ValueInt64()
+		body["maxSize"] = plan.MaxSize.ValueInt64()
 		body["scale_out_threshold"] = plan.ScaleOutThreshold.ValueInt64()
+		body["scaleOutThreshold"] = plan.ScaleOutThreshold.ValueInt64()
 		body["scale_in_threshold"] = plan.ScaleInThreshold.ValueInt64()
-		// metric_type defaults to "CPU" when not specified.
+		body["scaleInThreshold"] = plan.ScaleInThreshold.ValueInt64()
 		metricType := plan.MetricType.ValueString()
 		if metricType == "" {
 			metricType = "CPU"
 		}
 		body["metric_type"] = metricType
+		body["metricType"] = metricType
 	}
 
-	// Only include has_load_balancer when explicitly configured —
-	// avoids silently hard-coding false when the user omits the attribute.
+	// Only include has_load_balancer when explicitly configured.
 	if !plan.HasLoadBalancer.IsNull() && !plan.HasLoadBalancer.IsUnknown() {
 		body["has_load_balancer"] = plan.HasLoadBalancer.ValueBool()
+		body["hasLoadBalancer"] = plan.HasLoadBalancer.ValueBool()
 	}
 
-	// Load-balancer mode fields. kong.yaml renames these to camelCase like the
-	// rest, so they go out snake_case here.
+	// Load-balancer mode fields. The API expects loadbalancer_id and
+	// loadbalancer_pool_id as STRINGs (e.g. "1049"), not integers.
 	if v := plan.LoadBalancerID.ValueString(); v != "" {
 		body["loadbalancer_id"] = v
+		body["loadbalancerId"] = v
 	}
 	if v := plan.LoadBalancerPoolID.ValueString(); v != "" {
 		body["loadbalancer_pool_id"] = v
+		body["loadbalancerPoolId"] = v
 	}
 	if v := plan.SubnetID.ValueString(); v != "" {
-		// subnetId goes out as an integer; the console sends 9935, not "9935".
 		var subnetVal interface{} = v
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			subnetVal = n
 		}
 		body["subnet_id"] = subnetVal
+		body["subnetId"] = subnetVal
 	}
 	if !plan.PortNumber.IsNull() && !plan.PortNumber.IsUnknown() {
 		body["port_number"] = plan.PortNumber.ValueInt64()
+		body["portNumber"] = plan.PortNumber.ValueInt64()
 	}
 	return body
 }
@@ -549,19 +589,46 @@ func mapAutoscaleGroupResponse(raw map[string]interface{}, m *AutoscaleGroupReso
 	if v := asIDString(raw, "launchTemplateId"); v != "" {
 		m.LaunchTemplateID = types.StringValue(v)
 	}
-	m.IsAutoscale = types.BoolValue(asBool(raw, "isAutoscale"))
-	// Always set int fields — 0 is a valid configuration (e.g. scale-to-zero).
-	m.DesiredCapacity = types.Int64Value(asInt64(raw, "desiredCapacity"))
-	m.MinSize = types.Int64Value(asInt64(raw, "minSize"))
-	m.MaxSize = types.Int64Value(asInt64(raw, "maxSize"))
-	if v := asString(raw, "metricType"); v != "" {
-		m.MetricType = types.StringValue(v)
-	} else if m.MetricType.IsNull() || m.MetricType.IsUnknown() {
-		m.MetricType = types.StringValue("CPU")
+	if v := asString(raw, "description"); v != "" {
+		m.Description = types.StringValue(v)
+	} else if m.Description.IsUnknown() {
+		m.Description = types.StringNull()
 	}
-	m.ScaleOutThreshold = types.Int64Value(asInt64(raw, "scaleOutThreshold"))
-	m.ScaleInThreshold = types.Int64Value(asInt64(raw, "scaleInThreshold"))
+	m.IsAutoscale = types.BoolValue(asBool(raw, "isAutoscale"))
+	m.DesiredCapacity = types.Int64Value(asInt64(raw, "desiredCapacity"))
+
+	if m.IsAutoscale.ValueBool() {
+		m.MinSize = types.Int64Value(asInt64(raw, "minSize"))
+		m.MaxSize = types.Int64Value(asInt64(raw, "maxSize"))
+		if v := asString(raw, "metricType"); v != "" {
+			m.MetricType = types.StringValue(v)
+		} else {
+			m.MetricType = types.StringValue("CPU")
+		}
+		m.ScaleOutThreshold = types.Int64Value(asInt64(raw, "scaleOutThreshold"))
+		m.ScaleInThreshold = types.Int64Value(asInt64(raw, "scaleInThreshold"))
+	} else {
+		m.MinSize = types.Int64Null()
+		m.MaxSize = types.Int64Null()
+		m.MetricType = types.StringNull()
+		m.ScaleOutThreshold = types.Int64Null()
+		m.ScaleInThreshold = types.Int64Null()
+	}
+
 	m.HasLoadBalancer = types.BoolValue(asBool(raw, "hasLoadBalancer"))
+	// Load-balancer mode fields (camelCase from API).
+	if v := asIDString(raw, "loadbalancerId"); v != "" {
+		m.LoadBalancerID = types.StringValue(v)
+	}
+	if v := asIDString(raw, "loadbalancerPoolId"); v != "" {
+		m.LoadBalancerPoolID = types.StringValue(v)
+	}
+	if v := asIDString(raw, "subnetId"); v != "" {
+		m.SubnetID = types.StringValue(v)
+	}
+	if p := asInt64(raw, "portNumber"); p > 0 {
+		m.PortNumber = types.Int64Value(p)
+	}
 	if v := asString(raw, "vpcId"); v != "" {
 		m.VpcID = types.StringValue(v)
 	} else {

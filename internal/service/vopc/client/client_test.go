@@ -176,6 +176,29 @@ func TestDo400NoRetry(t *testing.T) {
 	}
 }
 
+func TestDoTimeoutNoRetry(t *testing.T) {
+	withTestBackoff(t, 1*time.Millisecond, 5*time.Millisecond)
+
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		time.Sleep(100 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := newTestClient(t, srv)
+	c.httpClient.Timeout = 10 * time.Millisecond // trigger client timeout
+
+	_, err := c.Do(context.Background(), "/op", nil)
+	if err == nil {
+		t.Fatal("expected error on timeout")
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("timeout should not retry: call count = %d, want 1", got)
+	}
+}
+
 func TestDoMarshalError(t *testing.T) {
 	c := NewClient("http://invalid", "tok")
 	// channels can't be marshalled to JSON

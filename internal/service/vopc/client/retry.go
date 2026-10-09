@@ -5,8 +5,11 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
+	"math/rand/v2"
+	"net"
+	"strings"
 	"time"
 )
 
@@ -38,8 +41,13 @@ func doWithRetry(ctx context.Context, op retryOp) (int, error) {
 		status, err := op()
 		lastStatus, lastErr = status, err
 
-		// Transport error → retry
+		// Transport error → retry (except timeouts)
 		if err != nil && status == 0 {
+			// Do not retry on timeout — the server may already be processing the
+			// request (e.g. creating VM) and retrying would duplicate the resource.
+			if isTimeoutError(err) {
+				return status, err
+			}
 			if attempt == maxRetryAttempts {
 				return status, err
 			}
@@ -88,5 +96,20 @@ func retryBackoff(attempt int) time.Duration {
 	if base <= 0 {
 		return 0
 	}
-	return time.Duration(rand.Int63n(int64(base)))
+	return time.Duration(rand.Int64N(int64(base)))
+}
+
+func isTimeoutError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, "Timeout exceeded") || strings.Contains(errStr, "deadline exceeded")
 }
