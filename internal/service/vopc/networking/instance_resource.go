@@ -18,6 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -89,7 +90,9 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				},
 			},
 			"name": schema.StringAttribute{
-				Computed: true,
+				Optional:    true,
+				Computed:    true,
+				Description: "Instance name. Optional on creation; can be updated in-place.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -200,6 +203,7 @@ func (r *InstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"storage_type": schema.StringAttribute{
 				Optional:    true,
 				Computed:    true,
+				Default:     stringdefault.StaticString("HDD"),
 				Description: "Root volume storage type: \"SSD\" or \"HDD\". Defaults to \"HDD\".",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
@@ -306,6 +310,7 @@ func (r *InstanceResource) Create(ctx context.Context, req resource.CreateReques
 	// Poll until POWERED_ON (this VPC uses POWERED_ON; other VPCs may use ACTIVE).
 	// The API Gateway renames instance_id→id before forwarding to API.
 	pollBody := map[string]interface{}{
+		"id":          vmID,
 		"instance_id": vmID,
 		"vpc_id":      vpcID,
 		"customer_id": r.customerID,
@@ -315,9 +320,28 @@ func (r *InstanceResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
+	wantedName := plan.Name.ValueString()
+	if !plan.Name.IsNull() && !plan.Name.IsUnknown() && wantedName != "" {
+		vmIDInt, _ := strconv.ParseInt(vmID, 10, 64)
+		renameBody := map[string]interface{}{
+			"id":          vmIDInt,
+			"instance_id": vmIDInt,
+			"name":        wantedName,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMRename, renameBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+	}
+
 	r.readInto(ctx, &plan, &resp.Diagnostics)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if wantedName != "" {
+		plan.Name = types.StringValue(wantedName)
 	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
@@ -368,7 +392,22 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 	if !plan.SecurityGroupIDs.Equal(state.SecurityGroupIDs) {
 		needsSGUpdate = true
 	}
+	needsRename := !plan.Name.IsNull() && !plan.Name.IsUnknown() && plan.Name.ValueString() != "" && !plan.Name.Equal(state.Name)
+	wantedName := plan.Name.ValueString()
 
+	if needsRename {
+		renameBody := map[string]interface{}{
+			"id":          vmIDInt,
+			"instance_id": vmIDInt,
+			"name":        wantedName,
+			"vpc_id":      vpcID,
+			"customer_id": r.customerID,
+		}
+		if _, diags := callAPI(ctx, r.client, pathVMRename, renameBody); diags.HasError() {
+			resp.Diagnostics.Append(diags...)
+			return
+		}
+	}
 	if needsResize {
 		stopBody := map[string]interface{}{
 			"instance_id": vmIDInt,
@@ -381,6 +420,7 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 		}
 
 		pollBody := map[string]interface{}{
+			"id":          vmID,
 			"instance_id": vmID,
 			"vpc_id":      vpcID,
 			"customer_id": r.customerID,
@@ -503,6 +543,9 @@ func (r *InstanceResource) Update(ctx context.Context, req resource.UpdateReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if needsRename {
+		plan.Name = types.StringValue(wantedName)
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
@@ -540,6 +583,7 @@ func (r *InstanceResource) Delete(ctx context.Context, req resource.DeleteReques
 	} else {
 		// Wait until POWERED_OFF before deleting.
 		pollStopBody := map[string]interface{}{
+			"id":          vmID,
 			"instance_id": vmID,
 			"vpc_id":      vpcID,
 			"customer_id": r.customerID,
@@ -563,6 +607,7 @@ func (r *InstanceResource) Delete(ctx context.Context, req resource.DeleteReques
 
 	// Poll until the VM is gone (The API Gateway renames instance_id→id).
 	detailBody := map[string]interface{}{
+		"id":          vmID,
 		"instance_id": vmID,
 		"vpc_id":      vpcID,
 		"customer_id": r.customerID,
@@ -599,6 +644,7 @@ func (r *InstanceResource) buildCreateBody(ctx context.Context, m *InstanceResou
 	if v := m.StorageType.ValueString(); v != "" {
 		storageType = v
 	}
+	m.StorageType = types.StringValue(storageType)
 	storageSize := m.Storage.ValueInt64()
 	instanceType := map[string]interface{}{
 		"storage":     storageSize,
@@ -657,6 +703,7 @@ func (r *InstanceResource) readInto(ctx context.Context, m *InstanceResourceMode
 		vpcID = r.defaultVpcID
 	}
 	body := map[string]interface{}{
+		"id":          m.ID.ValueString(),
 		"instance_id": m.ID.ValueString(),
 		"vpc_id":      vpcID,
 		"customer_id": r.customerID,
@@ -797,7 +844,9 @@ func mapVMResponse(ctx context.Context, resp *client.APIResponse, m *InstanceRes
 	if m.KeyPairID.IsUnknown() {
 		m.KeyPairID = types.StringNull()
 	}
-
+	if m.StorageType.IsNull() || m.StorageType.IsUnknown() || m.StorageType.ValueString() == "" {
+		m.StorageType = types.StringValue("HDD")
+	}
 	// Extract image info.
 	if image, ok := data["image"].(map[string]interface{}); ok {
 		m.ImageID = types.StringValue(asIDString(image, "id"))

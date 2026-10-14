@@ -12,8 +12,14 @@ ViettelIDC Compute Instance (VM). NOTE: starting and stopping a VM is not expose
 ## Example Usage
 
 ```terraform
+data "viettelidc_ovpc_vm_templates" "ubuntu" {
+  name_filter = "Ubuntu 22.04"
+  vpc_id      = data.viettelidc_ovpc_vpc.main.id
+}
+
 resource "viettelidc_ovpc_instance" "vm" {
-  template_id        = 101
+  name               = "web-server"
+  template_id        = tonumber(data.viettelidc_ovpc_vm_templates.ubuntu.templates[0].id)
   subnet_id          = viettelidc_ovpc_subnet.private.id
   admin_pass         = "MySecretPass123!"
   cpu                = 2
@@ -43,6 +49,7 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `key_pair_id` (String) Key pair ID to inject into the instance. Resolved from key_pair_name when omitted — the create endpoint needs the id, and a name on its own makes the API try to create a new key pair (KEY_PAIR_EXISTED).
 - `key_pair_name` (String) Key pair name to inject into the instance. Only works when the template reports ssh_key_enabled = true (see viettelidc_ovpc_vm_templates); on a template with ssh_key_enabled = false it is ignored and the instance takes a fixed login, so set admin_pass instead.
 - `memory` (Number) RAM in GB.
+- `name` (String) Instance name. Optional on creation; can be updated in-place.
 - `security_group_ids` (List of String) List of Security Group IDs to attach.
 - `storage_type` (String) Root volume storage type: "SSD" or "HDD". Defaults to "HDD".
 - `vpc_id` (String) VPC ID.
@@ -53,6 +60,5 @@ resource "viettelidc_ovpc_instance" "vm" {
 - `image_id` (String)
 - `image_name` (String)
 - `ip_address` (String)
-- `name` (String)
 - `root_nic_id` (String) ID of the primary NIC auto-created with this instance. Use this to associate a Floating IP without creating a separate NIC.
 - `status` (String)

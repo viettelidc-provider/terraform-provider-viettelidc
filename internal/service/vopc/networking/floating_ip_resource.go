@@ -68,6 +68,7 @@ func (r *FloatingIPResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				Description: "Floating IP ID (vttFloatingId). When set, the resource associates this existing Floating IP instead of allocating a new one.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
+					stringplanmodifier.RequiresReplace(),
 				},
 			},
 			"public_ip": schema.StringAttribute{

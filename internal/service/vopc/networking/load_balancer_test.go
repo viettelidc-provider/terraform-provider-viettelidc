@@ -11,7 +11,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"terraform-provider-viettelidc/internal/service/vopc/client"
@@ -393,6 +395,9 @@ func TestLoadBalancerDataSource_LookupByIPAddress(t *testing.T) {
 	if got.ID.ValueString() != "929" || got.Name.ValueString() != "dev" {
 		t.Fatalf("matched the wrong load balancer: %s/%s", got.ID.ValueString(), got.Name.ValueString())
 	}
+	if got.LoadBalancerID.ValueInt64() != 929 {
+		t.Errorf("got LoadBalancerID=%d, want 929", got.LoadBalancerID.ValueInt64())
+	}
 	if got.ProvisioningStatus.ValueString() != "active" || got.IsPublicLoadBalancer.ValueBool() {
 		t.Errorf("new fields not populated: %+v", got)
 	}
@@ -478,6 +483,126 @@ func TestValidateCertificate(t *testing.T) {
 				t.Fatalf("protocol=%s cert=%v: got error=%v want %v", tc.protocol, tc.cert, got, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestValidateRedirect(t *testing.T) {
+	t.Parallel()
+	str := types.StringValue
+	nullStr := types.StringNull()
+	b := types.BoolValue
+	nullBool := types.BoolNull()
+	p := path.Root("listener_protocol")
+	d := path.Root("domain")
+
+	cases := []struct {
+		name           string
+		protocol       types.String
+		enableRedirect types.Bool
+		domain         types.String
+		wantErr        bool
+	}{
+		{name: "http with redirect and domain", protocol: str("HTTP"), enableRedirect: b(true), domain: str("app.example.com"), wantErr: false},
+		{name: "http with redirect and empty domain", protocol: str("HTTP"), enableRedirect: b(true), domain: str(""), wantErr: true},
+		{name: "http with redirect and null domain", protocol: str("HTTP"), enableRedirect: b(true), domain: nullStr, wantErr: true},
+		{name: "http with redirect false and empty domain", protocol: str("HTTP"), enableRedirect: b(false), domain: str(""), wantErr: false},
+		{name: "http with redirect null and empty domain", protocol: str("HTTP"), enableRedirect: nullBool, domain: str(""), wantErr: false},
+		{name: "tcp with redirect true", protocol: str("TCP"), enableRedirect: b(true), domain: str("app.example.com"), wantErr: true},
+		{name: "tcp with redirect false", protocol: str("TCP"), enableRedirect: b(false), domain: str(""), wantErr: false},
+		{name: "unknown redirect", protocol: str("HTTP"), enableRedirect: types.BoolUnknown(), domain: str(""), wantErr: false},
+		{name: "null protocol defaults to http with redirect", protocol: nullStr, enableRedirect: b(true), domain: str("app.example.com"), wantErr: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := validateRedirect(p, d, tc.protocol, tc.enableRedirect, tc.domain).HasError(); got != tc.wantErr {
+				t.Fatalf("protocol=%s redirect=%v domain=%v: got error=%v want %v", tc.protocol, tc.enableRedirect, tc.domain, got, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateSNICertificates(t *testing.T) {
+	t.Parallel()
+	str := types.StringValue
+	nullStr := types.StringNull()
+	p := path.Root("sni_certificate_ids")
+
+	listWithCert, _ := types.ListValue(types.StringType, []attr.Value{types.StringValue("cert-1")})
+	nullList := types.ListNull(types.StringType)
+
+	cases := []struct {
+		name     string
+		protocol types.String
+		sniCerts types.List
+		wantErr  bool
+	}{
+		{name: "terminated_https with certs", protocol: str("TERMINATED_HTTPS"), sniCerts: listWithCert, wantErr: false},
+		{name: "terminated_https with null certs", protocol: str("TERMINATED_HTTPS"), sniCerts: nullList, wantErr: false},
+		{name: "http with certs", protocol: str("HTTP"), sniCerts: listWithCert, wantErr: true},
+		{name: "tcp with certs", protocol: str("TCP"), sniCerts: listWithCert, wantErr: true},
+		{name: "null protocol with certs", protocol: nullStr, sniCerts: listWithCert, wantErr: true},
+		{name: "unknown certs", protocol: str("HTTP"), sniCerts: types.ListUnknown(types.StringType), wantErr: false},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := validateSNICertificates(p, tc.protocol, tc.sniCerts).HasError(); got != tc.wantErr {
+				t.Fatalf("protocol=%s certs=%v: got error=%v want %v", tc.protocol, tc.sniCerts, got, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestFetchListeners_L7Attributes(t *testing.T) {
+	t.Parallel()
+	srv := newFakeAPI(t)
+	srv.on(pathLoadBalancerListeners, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "ok", []map[string]interface{}{
+			{
+				"id":                        float64(1001),
+				"name":                      "primary-listener",
+				"description":               "primary",
+				"protocol":                  "HTTP",
+				"protocolPort":              float64(80),
+				"xForwardedFor":             true,
+				"xForwardedPort":            false,
+				"xForwardedProto":           true,
+				"ipAddress":                 "192.168.1.50",
+				"domain":                    "app.example.com",
+				"enableHttpToHttpsRedirect": true,
+				"sniCertificateIdList":      []interface{}{"cert-sni-1", "cert-sni-2"},
+			},
+		}
+	})
+
+	r := &LoadBalancerResource{client: srv.newClient(), customerID: "cust-1", defaultVpcID: "100"}
+	model := &LoadBalancerResourceModel{
+		ID:               types.StringValue("999"),
+		VpcID:            types.StringValue("100"),
+		ListenerProtocol: types.StringValue("HTTP"),
+		ListenerPort:     types.Int64Value(80),
+		ListenerName:     types.StringValue("primary-listener"),
+	}
+	var diags diag.Diagnostics
+	r.fetchListeners(context.Background(), model, &diags)
+	if diags.HasError() {
+		t.Fatalf("fetchListeners diags: %v", diags)
+	}
+
+	if model.Domain.ValueString() != "app.example.com" {
+		t.Errorf("model.Domain = %q, want %q", model.Domain.ValueString(), "app.example.com")
+	}
+	if !model.EnableHTTPToHTTPSRedirect.ValueBool() {
+		t.Errorf("model.EnableHTTPToHTTPSRedirect = false, want true")
+	}
+	if len(model.SNICertificateIDs.Elements()) != 2 {
+		t.Errorf("model.SNICertificateIDs count = %d, want 2", len(model.SNICertificateIDs.Elements()))
+	}
+	if len(model.Listeners.Elements()) != 1 {
+		t.Fatalf("model.Listeners count = %d, want 1", len(model.Listeners.Elements()))
 	}
 }
 

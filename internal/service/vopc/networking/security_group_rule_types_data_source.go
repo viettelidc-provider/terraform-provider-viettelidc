@@ -122,8 +122,10 @@ func (d *SGRuleTypesDataSource) Read(ctx context.Context, req datasource.ReadReq
 	}
 
 	body := map[string]interface{}{
-		"vpcId":      vpcID,
-		"customerId": d.customerID,
+		"vpc_id":      vpcID,
+		"vpcId":       vpcID,
+		"customer_id": d.customerID,
+		"customerId":  d.customerID,
 	}
 
 	// The rule/type endpoint returns a plain JSON array, not a wrapped APIResponse.

@@ -11,10 +11,71 @@ Lookup a Load Balancer by ID, name or IP address in a VPC.
 
 ## Example Usage
 
+### Basic Lookup by Name
+
 ```terraform
+data "viettelidc_ovpc_vpc" "main" {
+  name = "my-vpc"
+}
+
 data "viettelidc_ovpc_load_balancer" "web" {
   name   = "web-lb"
   vpc_id = data.viettelidc_ovpc_vpc.main.id
+}
+
+output "load_balancer_id" {
+  value = data.viettelidc_ovpc_load_balancer.web.load_balancer_id
+}
+```
+
+## End-to-End Golden Developer Workflow (100% Name-Based)
+
+Developers can configure complete Load Balancer L7 routing in Terraform purely using names and standard references, with zero hardcoded internal IDs:
+
+```terraform
+# 1. Discover VPC by Name
+data "viettelidc_ovpc_vpc" "app" {
+  name = "production-vpc"
+}
+
+# 2. Discover Load Balancer by Name
+data "viettelidc_ovpc_load_balancer" "app_lb" {
+  name   = "production-lb"
+  vpc_id = data.viettelidc_ovpc_vpc.app.id
+}
+
+# 3. Discover HTTP Listener by LB Name and Port (no IDs needed!)
+data "viettelidc_ovpc_lb_listener" "http" {
+  vpc_id             = data.viettelidc_ovpc_vpc.app.id
+  load_balancer_name = "production-lb"
+  port               = 80
+}
+
+# 4. Discover Backend Pool by LB Name and Pool Name (no IDs needed!)
+data "viettelidc_ovpc_lb_pool" "api_pool" {
+  vpc_id             = data.viettelidc_ovpc_vpc.app.id
+  load_balancer_name = "production-lb"
+  name               = "api-backend-pool"
+}
+
+# 5. Create L7 Policy referencing the discovered Listener and Pool
+resource "viettelidc_ovpc_lb_l7_policy" "route_api" {
+  vpc_id           = data.viettelidc_ovpc_vpc.app.id
+  listener_id      = data.viettelidc_ovpc_lb_listener.http.id
+  name             = "route-api"
+  description      = "Route /api/* requests to API microservice pool"
+  action           = "REDIRECT_TO_POOL"
+  redirect_pool_id = data.viettelidc_ovpc_lb_pool.api_pool.id
+  priority         = 1
+}
+
+# 6. Create L7 Rule on the Policy matching URL Path prefix
+resource "viettelidc_ovpc_lb_l7_rule" "api_path" {
+  vpc_id       = data.viettelidc_ovpc_vpc.app.id
+  policy_id    = viettelidc_ovpc_lb_l7_policy.route_api.id
+  type         = "PATH"
+  compare_type = "STARTS_WITH"
+  value        = "/api/"
 }
 ```
 
@@ -36,6 +97,7 @@ data "viettelidc_ovpc_load_balancer" "web" {
 - `health_monitors` (Attributes List) Health monitors attached to the Load Balancer's pools. (see [below for nested schema](#nestedatt--health_monitors))
 - `is_public_loadbalancer` (Boolean) Whether the Load Balancer is reachable from the internet.
 - `listeners` (List of Object) List of listeners associated with the Load Balancer. (see [below for nested schema](#nestedatt--listeners))
+- `load_balancer_id` (Number) Load Balancer ID as integer (vttLoadBalancerId).
 - `loadbalancer_type` (String) Type of the Load Balancer.
 - `members` (Attributes List) Pool members currently behind the Load Balancer. Unlike the resource's pool_members, which records what was asked for at creation, this is what the API reports right now. (see [below for nested schema](#nestedatt--members))
 - `operating_status` (String) Operating status of the Load Balancer.

@@ -94,3 +94,32 @@ resource "viettelidc_ovpc_load_balancer" "multi" {
     }
   }
 }
+
+# 5. HTTP to HTTPS redirect with domain and SNI certificates.
+resource "viettelidc_ovpc_load_balancer" "redirect_and_sni" {
+  name              = "web-redirect-lb"
+  subnet_id         = viettelidc_ovpc_subnet.public.id
+  loadbalancer_type = "APPLICATION HTTP-HTTPS"
+  package_type      = "LB Large"
+  vpc_id            = data.viettelidc_ovpc_vpc.main.id
+
+  # Primary listener: HTTP redirecting automatically to HTTPS
+  listener_protocol             = "HTTP"
+  listener_port                 = 80
+  domain                        = "example.com"
+  enable_http_to_https_redirect = true
+
+  # Additional listener: HTTPS with primary cert and SNI certs
+  additional_listener {
+    protocol            = "TERMINATED_HTTPS"
+    port                = 443
+    certificate_id      = viettelidc_ovpc_certificate.web_cert.id
+    sni_certificate_ids = [viettelidc_ovpc_certificate.extra_cert.id]
+
+    pool_members {
+      vm_id  = viettelidc_ovpc_instance.vm1.id
+      port   = 443
+      weight = 1
+    }
+  }
+}
