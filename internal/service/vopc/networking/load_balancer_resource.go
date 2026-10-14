@@ -19,6 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
@@ -61,10 +62,13 @@ type LoadBalancerResourceModel struct {
 	ProvisioningStatus   types.String `tfsdk:"provisioning_status"`
 	IsPublicLoadBalancer types.Bool   `tfsdk:"is_public_loadbalancer"`
 
-	ListenerName           types.String `tfsdk:"listener_name"`
-	ListenerProtocol       types.String `tfsdk:"listener_protocol"`
-	ListenerPort           types.Int64  `tfsdk:"listener_port"`
-	CertificateID          types.String `tfsdk:"certificate_id"`
+	ListenerName              types.String `tfsdk:"listener_name"`
+	ListenerProtocol          types.String `tfsdk:"listener_protocol"`
+	ListenerPort              types.Int64  `tfsdk:"listener_port"`
+	CertificateID             types.String `tfsdk:"certificate_id"`
+	Domain                    types.String `tfsdk:"domain"`
+	EnableHTTPToHTTPSRedirect types.Bool   `tfsdk:"enable_http_to_https_redirect"`
+	SNICertificateIDs         types.List   `tfsdk:"sni_certificate_ids"`
 	PoolName               types.String `tfsdk:"pool_name"`
 	PoolAlgorithm          types.String `tfsdk:"pool_algorithm"`
 	PoolSessionPersistence types.String `tfsdk:"pool_session_persistence"`
@@ -91,9 +95,12 @@ type LoadBalancerResourceModel struct {
 // which is how the console attaches a TLS-terminating listener with a cert to a
 // running load balancer.
 type AdditionalListenerModel struct {
-	Protocol      types.String `tfsdk:"protocol"`
-	Port          types.Int64  `tfsdk:"port"`
-	CertificateID types.String `tfsdk:"certificate_id"`
+	Protocol                  types.String `tfsdk:"protocol"`
+	Port                      types.Int64  `tfsdk:"port"`
+	CertificateID             types.String `tfsdk:"certificate_id"`
+	Domain                    types.String `tfsdk:"domain"`
+	EnableHTTPToHTTPSRedirect types.Bool   `tfsdk:"enable_http_to_https_redirect"`
+	SNICertificateIDs         types.List   `tfsdk:"sni_certificate_ids"`
 
 	PoolAlgorithm          types.String      `tfsdk:"pool_algorithm"`
 	PoolSessionPersistence types.String      `tfsdk:"pool_session_persistence"`
@@ -113,14 +120,18 @@ type PoolMemberInput struct {
 }
 
 type ListenerModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Description     types.String `tfsdk:"description"`
-	Protocol        types.String `tfsdk:"protocol"`
-	ProtocolPort    types.Int64  `tfsdk:"protocol_port"`
-	XForwardedFor   types.Bool   `tfsdk:"x_forwarded_for"`
-	XForwardedPort  types.Bool   `tfsdk:"x_forwarded_port"`
-	XForwardedProto types.Bool   `tfsdk:"x_forwarded_proto"`
+	ID                        types.String `tfsdk:"id"`
+	Name                      types.String `tfsdk:"name"`
+	Description               types.String `tfsdk:"description"`
+	Protocol                  types.String `tfsdk:"protocol"`
+	ProtocolPort              types.Int64  `tfsdk:"protocol_port"`
+	XForwardedFor             types.Bool   `tfsdk:"x_forwarded_for"`
+	XForwardedPort            types.Bool   `tfsdk:"x_forwarded_port"`
+	XForwardedProto           types.Bool   `tfsdk:"x_forwarded_proto"`
+	IPAddress                 types.String `tfsdk:"ip_address"`
+	Domain                    types.String `tfsdk:"domain"`
+	EnableHTTPToHTTPSRedirect types.Bool   `tfsdk:"enable_http_to_https_redirect"`
+	SNICertificateIDs         types.List   `tfsdk:"sni_certificate_ids"`
 }
 
 type PoolModel struct {
@@ -137,14 +148,18 @@ func NewLoadBalancerResource() resource.Resource { return &LoadBalancerResource{
 // listeners / pools lists, shared by the schema and the error-path null lists.
 func listenerObjectTypes() map[string]attr.Type {
 	return map[string]attr.Type{
-		"id":                types.StringType,
-		"name":              types.StringType,
-		"description":       types.StringType,
-		"protocol":          types.StringType,
-		"protocol_port":     types.Int64Type,
-		"x_forwarded_for":   types.BoolType,
-		"x_forwarded_port":  types.BoolType,
-		"x_forwarded_proto": types.BoolType,
+		"id":                            types.StringType,
+		"name":                          types.StringType,
+		"description":                   types.StringType,
+		"protocol":                      types.StringType,
+		"protocol_port":                 types.Int64Type,
+		"x_forwarded_for":               types.BoolType,
+		"x_forwarded_port":              types.BoolType,
+		"x_forwarded_proto":             types.BoolType,
+		"ip_address":                    types.StringType,
+		"domain":                        types.StringType,
+		"enable_http_to_https_redirect": types.BoolType,
+		"sni_certificate_ids":          types.ListType{ElemType: types.StringType},
 	}
 }
 
@@ -234,8 +249,13 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 				Description: "Operating status of the Load Balancer.",
 			},
 			"ip_address": schema.StringAttribute{
+				Optional:    true,
 				Computed:    true,
-				Description: "Private IP the Load Balancer listens on, assigned at creation.",
+				Description: "Specific IP to bind listener to, or private IP of the Load Balancer.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
 			},
 			"provisioning_status": schema.StringAttribute{
 				Computed:    true,
@@ -284,6 +304,32 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 					"Required when listener_protocol is TERMINATED_HTTPS and only valid then. Immutable.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
+				},
+			},
+			"domain": schema.StringAttribute{
+				Optional:    true,
+				Computed:    true,
+				Description: "Domain name for the listener, required if enable_http_to_https_redirect is true.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.RequiresReplace(),
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"enable_http_to_https_redirect": schema.BoolAttribute{
+				Optional:    true,
+				Computed:    true,
+				Default:     booldefault.StaticBool(false),
+				Description: "HTTP to HTTPS redirect, only valid when listener_protocol is HTTP. Defaults to false.",
+				PlanModifiers: []planmodifier.Bool{
+					boolplanmodifier.RequiresReplace(),
+				},
+			},
+			"sni_certificate_ids": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Description: "List of SNI certificate IDs, only valid when listener_protocol is TERMINATED_HTTPS.",
+				PlanModifiers: []planmodifier.List{
+					listplanmodifier.RequiresReplace(),
 				},
 			},
 			"listener_port": schema.Int64Attribute{
@@ -486,6 +532,22 @@ func (r *LoadBalancerResource) Schema(_ context.Context, _ resource.SchemaReques
 							Optional:    true,
 							Description: "Certificate to terminate TLS with. Required when protocol is TERMINATED_HTTPS.",
 						},
+						"domain": schema.StringAttribute{
+							Optional:    true,
+							Computed:    true,
+							Description: "Domain name, required if enable_http_to_https_redirect is true.",
+						},
+						"enable_http_to_https_redirect": schema.BoolAttribute{
+							Optional:    true,
+							Computed:    true,
+							Default:     booldefault.StaticBool(false),
+							Description: "HTTP to HTTPS redirect, only valid when protocol is HTTP. Defaults to false.",
+						},
+						"sni_certificate_ids": schema.ListAttribute{
+							ElementType: types.StringType,
+							Optional:    true,
+							Description: "List of SNI certificate IDs, only valid when protocol is TERMINATED_HTTPS.",
+						},
 						"pool_algorithm": schema.StringAttribute{
 							Optional:    true,
 							Computed:    true,
@@ -599,11 +661,30 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 		"xForwardedPort":  false,
 		"xForwardedProto": false,
 	}
+	if v := plan.IPAddress.ValueString(); v != "" {
+		listenerBody["ipAddress"] = v
+	}
+	if v := plan.Domain.ValueString(); v != "" {
+		listenerBody["domain"] = v
+	}
+	if strings.ToUpper(listenerProtocol) == "HTTP" {
+		if !plan.EnableHTTPToHTTPSRedirect.IsNull() && !plan.EnableHTTPToHTTPSRedirect.IsUnknown() {
+			listenerBody["enableHttpToHttpsRedirect"] = plan.EnableHTTPToHTTPSRedirect.ValueBool()
+		}
+	} else if plan.EnableHTTPToHTTPSRedirect.ValueBool() {
+		listenerBody["enableHttpToHttpsRedirect"] = true
+	}
 	// TERMINATED_HTTPS terminates TLS at the load balancer, which needs the cert
 	// to present. This is the create-time attachment the console does through
 	// compound-create; changing a live listener's protocol is a separate flow.
 	if v := plan.CertificateID.ValueString(); v != "" {
 		listenerBody["defaultCertificateId"] = v
+	}
+	if sniIDs := parseSNICertIDs(ctx, plan.SNICertificateIDs, &resp.Diagnostics); sniIDs != nil {
+		listenerBody["sniCertificateIdList"] = sniIDs
+	}
+	if resp.Diagnostics.HasError() {
+		return
 	}
 
 	// The monitor has to speak a protocol the listener can carry; a UDP listener
@@ -758,12 +839,17 @@ func (r *LoadBalancerResource) Create(ctx context.Context, req resource.CreateRe
 	if plan.OperatingStatus.IsUnknown() {
 		plan.OperatingStatus = types.StringValue("")
 	}
+	if plan.Domain.IsUnknown() {
+		plan.Domain = types.StringNull()
+	}
+	if plan.EnableHTTPToHTTPSRedirect.IsUnknown() {
+		plan.EnableHTTPToHTTPSRedirect = types.BoolValue(false)
+	}
+	if plan.SNICertificateIDs.IsUnknown() {
+		plan.SNICertificateIDs = types.ListNull(types.StringType)
+	}
 	if plan.Listeners.IsUnknown() {
-		plan.Listeners, _ = types.ListValue(types.ObjectType{AttrTypes: map[string]attr.Type{
-			"id": types.StringType, "name": types.StringType, "description": types.StringType,
-			"protocol": types.StringType, "protocol_port": types.Int64Type,
-			"x_forwarded_for": types.BoolType, "x_forwarded_port": types.BoolType, "x_forwarded_proto": types.BoolType,
-		}}, []attr.Value{})
+		plan.Listeners, _ = types.ListValue(types.ObjectType{AttrTypes: listenerObjectTypes()}, []attr.Value{})
 	}
 	if plan.Pools.IsUnknown() {
 		plan.Pools, _ = types.ListValue(types.ObjectType{AttrTypes: map[string]attr.Type{
@@ -868,8 +954,24 @@ func (r *LoadBalancerResource) createAdditionalListener(ctx context.Context, lbI
 		"xForwardedProto":   false,
 		"vttLoadBalancerId": lbID,
 	}
+	if v := l.Domain.ValueString(); v != "" {
+		listenerBody["domain"] = v
+	}
+	if strings.ToUpper(protocol) == "HTTP" {
+		if !l.EnableHTTPToHTTPSRedirect.IsNull() && !l.EnableHTTPToHTTPSRedirect.IsUnknown() {
+			listenerBody["enableHttpToHttpsRedirect"] = l.EnableHTTPToHTTPSRedirect.ValueBool()
+		}
+	} else if l.EnableHTTPToHTTPSRedirect.ValueBool() {
+		listenerBody["enableHttpToHttpsRedirect"] = true
+	}
 	if v := l.CertificateID.ValueString(); v != "" {
 		listenerBody["defaultCertificateId"] = v
+	}
+	if sniIDs := parseSNICertIDs(ctx, l.SNICertificateIDs, diags); sniIDs != nil {
+		listenerBody["sniCertificateIdList"] = sniIDs
+	}
+	if diags.HasError() {
+		return
 	}
 	monitor := map[string]interface{}{
 		"name": name, "type": monitorType, "delay": 5, "timeout": 5,
@@ -1070,6 +1172,15 @@ func (r *LoadBalancerResource) readAndMerge(ctx context.Context, model *LoadBala
 		model.OperatingStatus = types.StringValue(detailResp.OperatingStatus)
 		model.ProvisioningStatus = types.StringValue(detailResp.ProvisioningStatus)
 		model.IsPublicLoadBalancer = types.BoolValue(detailResp.IsPublicLoadbalancer)
+		if model.Domain.IsUnknown() {
+			model.Domain = types.StringNull()
+		}
+		if model.EnableHTTPToHTTPSRedirect.IsUnknown() {
+			model.EnableHTTPToHTTPSRedirect = types.BoolValue(false)
+		}
+		if model.SNICertificateIDs.IsUnknown() {
+			model.SNICertificateIDs = types.ListNull(types.StringType)
+		}
 		if model.Listeners.IsUnknown() {
 			model.Listeners = types.ListNull(types.ObjectType{AttrTypes: listenerObjectTypes()})
 		}
@@ -1128,14 +1239,18 @@ func (r *LoadBalancerResource) fetchListeners(ctx context.Context, model *LoadBa
 	}
 
 	var listResp []struct {
-		ID              interface{} `json:"id"`
-		Name            string      `json:"name"`
-		Description     string      `json:"description"`
-		Protocol        string      `json:"protocol"`
-		ProtocolPort    int         `json:"protocolPort"`
-		XForwardedFor   bool        `json:"xForwardedFor"`
-		XForwardedPort  bool        `json:"xForwardedPort"`
-		XForwardedProto bool        `json:"xForwardedProto"`
+		ID                        interface{}   `json:"id"`
+		Name                      string        `json:"name"`
+		Description               string        `json:"description"`
+		Protocol                  string        `json:"protocol"`
+		ProtocolPort              int           `json:"protocolPort"`
+		XForwardedFor             bool          `json:"xForwardedFor"`
+		XForwardedPort            bool          `json:"xForwardedPort"`
+		XForwardedProto           bool          `json:"xForwardedProto"`
+		IPAddress                 string        `json:"ipAddress"`
+		Domain                    string        `json:"domain"`
+		EnableHTTPToHTTPSRedirect bool          `json:"enableHttpToHttpsRedirect"`
+		SNICertificateIDList      []interface{} `json:"sniCertificateIdList"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
@@ -1160,39 +1275,58 @@ func (r *LoadBalancerResource) fetchListeners(ctx context.Context, model *LoadBa
 		}
 
 		listenerMap := map[string]attr.Value{
-			"id":                types.StringValue(idStr),
-			"name":              types.StringValue(item.Name),
-			"description":       types.StringValue(item.Description),
-			"protocol":          types.StringValue(item.Protocol),
-			"protocol_port":     types.Int64Value(int64(item.ProtocolPort)),
-			"x_forwarded_for":   types.BoolValue(item.XForwardedFor),
-			"x_forwarded_port":  types.BoolValue(item.XForwardedPort),
-			"x_forwarded_proto": types.BoolValue(item.XForwardedProto),
+			"id":                            types.StringValue(idStr),
+			"name":                          types.StringValue(item.Name),
+			"description":                   types.StringValue(item.Description),
+			"protocol":                      types.StringValue(item.Protocol),
+			"protocol_port":                 types.Int64Value(int64(item.ProtocolPort)),
+			"x_forwarded_for":               types.BoolValue(item.XForwardedFor),
+			"x_forwarded_port":              types.BoolValue(item.XForwardedPort),
+			"x_forwarded_proto":             types.BoolValue(item.XForwardedProto),
+			"ip_address":                    stringOrNull(item.IPAddress),
+			"domain":                        stringOrNull(item.Domain),
+			"enable_http_to_https_redirect": types.BoolValue(item.EnableHTTPToHTTPSRedirect),
+			"sni_certificate_ids":          parseSNICertIDsFromAPI(item.SNICertificateIDList),
 		}
-		obj, d := types.ObjectValue(map[string]attr.Type{
-			"id":                types.StringType,
-			"name":              types.StringType,
-			"description":       types.StringType,
-			"protocol":          types.StringType,
-			"protocol_port":     types.Int64Type,
-			"x_forwarded_for":   types.BoolType,
-			"x_forwarded_port":  types.BoolType,
-			"x_forwarded_proto": types.BoolType,
-		}, listenerMap)
+		obj, d := types.ObjectValue(listenerObjectTypes(), listenerMap)
 		diags.Append(d...)
 		listeners = append(listeners, obj)
+
+		// Map primary listener attributes back into model/state if this item matches
+		isPrimary := false
+		if !model.ListenerProtocol.IsNull() && !model.ListenerPort.IsNull() {
+			if strings.EqualFold(item.Protocol, model.ListenerProtocol.ValueString()) && int64(item.ProtocolPort) == model.ListenerPort.ValueInt64() {
+				isPrimary = true
+			}
+		} else if !model.ListenerName.IsNull() && item.Name == model.ListenerName.ValueString() {
+			isPrimary = true
+		}
+		if isPrimary {
+			if item.Domain != "" {
+				model.Domain = types.StringValue(item.Domain)
+			} else if model.Domain.IsUnknown() {
+				model.Domain = types.StringNull()
+			}
+			model.EnableHTTPToHTTPSRedirect = types.BoolValue(item.EnableHTTPToHTTPSRedirect)
+			if item.SNICertificateIDList != nil {
+				model.SNICertificateIDs = parseSNICertIDsFromAPI(item.SNICertificateIDList)
+			} else if model.SNICertificateIDs.IsUnknown() {
+				model.SNICertificateIDs = types.ListNull(types.StringType)
+			}
+		}
 	}
 
-	listType, d := types.ListValue(types.ObjectType{AttrTypes: map[string]attr.Type{
-		"id":                types.StringType,
-		"name":              types.StringType,
-		"description":       types.StringType,
-		"protocol":          types.StringType,
-		"protocol_port":     types.Int64Type,
-		"x_forwarded_for":   types.BoolType,
-		"x_forwarded_port":  types.BoolType,
-		"x_forwarded_proto": types.BoolType,
-	}}, listeners)
+	if model.Domain.IsUnknown() {
+		model.Domain = types.StringNull()
+	}
+	if model.EnableHTTPToHTTPSRedirect.IsUnknown() {
+		model.EnableHTTPToHTTPSRedirect = types.BoolValue(false)
+	}
+	if model.SNICertificateIDs.IsUnknown() {
+		model.SNICertificateIDs = types.ListNull(types.StringType)
+	}
+
+	listType, d := types.ListValue(types.ObjectType{AttrTypes: listenerObjectTypes()}, listeners)
 	diags.Append(d...)
 	model.Listeners = listType
 }
@@ -1394,9 +1528,14 @@ func (r *LoadBalancerResource) ValidateConfig(ctx context.Context, req resource.
 	}
 	resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, cfg.ListenerProtocol)...)
 	resp.Diagnostics.Append(validateCertificate(cfg.ListenerProtocol, cfg.CertificateID)...)
-	for _, l := range cfg.AdditionalListeners {
+	resp.Diagnostics.Append(validateRedirect(path.Root("listener_protocol"), path.Root("domain"), cfg.ListenerProtocol, cfg.EnableHTTPToHTTPSRedirect, cfg.Domain)...)
+	resp.Diagnostics.Append(validateSNICertificates(path.Root("sni_certificate_ids"), cfg.ListenerProtocol, cfg.SNICertificateIDs)...)
+	for i, l := range cfg.AdditionalListeners {
+		lPath := path.Root("additional_listener").AtListIndex(i)
 		resp.Diagnostics.Append(validateListenerProtocol(cfg.LoadBalancerType, l.Protocol)...)
 		resp.Diagnostics.Append(validateCertificate(l.Protocol, l.CertificateID)...)
+		resp.Diagnostics.Append(validateRedirect(lPath.AtName("protocol"), lPath.AtName("domain"), l.Protocol, l.EnableHTTPToHTTPSRedirect, l.Domain)...)
+		resp.Diagnostics.Append(validateSNICertificates(lPath.AtName("sni_certificate_ids"), l.Protocol, l.SNICertificateIDs)...)
 	}
 }
 
@@ -1498,9 +1637,12 @@ func (r *LoadBalancerResource) readAdditionalListeners(ctx context.Context, m *L
 	}
 
 	var listeners []struct {
-		ID           string `json:"id"`
-		Protocol     string `json:"protocol"`
-		ProtocolPort int64  `json:"protocolPort"`
+		ID                        string        `json:"id"`
+		Protocol                  string        `json:"protocol"`
+		ProtocolPort              int64         `json:"protocolPort"`
+		Domain                    string        `json:"domain"`
+		EnableHTTPToHTTPSRedirect bool          `json:"enableHttpToHttpsRedirect"`
+		SNICertificateIDList      []interface{} `json:"sniCertificateIdList"`
 	}
 	var pools []struct {
 		ID         string `json:"id"`
@@ -1517,13 +1659,45 @@ func (r *LoadBalancerResource) readAdditionalListeners(ctx context.Context, m *L
 	for i := range m.AdditionalListeners {
 		l := &m.AdditionalListeners[i]
 		var listenerID string
-		for _, x := range listeners {
-			if strings.EqualFold(x.Protocol, l.Protocol.ValueString()) && x.ProtocolPort == l.Port.ValueInt64() {
-				listenerID = x.ID
+		var matched *struct {
+			ID                        string        `json:"id"`
+			Protocol                  string        `json:"protocol"`
+			ProtocolPort              int64         `json:"protocolPort"`
+			Domain                    string        `json:"domain"`
+			EnableHTTPToHTTPSRedirect bool          `json:"enableHttpToHttpsRedirect"`
+			SNICertificateIDList      []interface{} `json:"sniCertificateIdList"`
+		}
+		for idx := range listeners {
+			if strings.EqualFold(listeners[idx].Protocol, l.Protocol.ValueString()) && listeners[idx].ProtocolPort == l.Port.ValueInt64() {
+				listenerID = listeners[idx].ID
+				matched = &listeners[idx]
 				break
 			}
 		}
 		l.ID = types.StringValue(listenerID)
+		if matched != nil {
+			if matched.Domain != "" {
+				l.Domain = types.StringValue(matched.Domain)
+			} else if l.Domain.IsNull() || l.Domain.IsUnknown() {
+				l.Domain = types.StringNull()
+			}
+			l.EnableHTTPToHTTPSRedirect = types.BoolValue(matched.EnableHTTPToHTTPSRedirect)
+			if matched.SNICertificateIDList != nil {
+				l.SNICertificateIDs = parseSNICertIDsFromAPI(matched.SNICertificateIDList)
+			} else if l.SNICertificateIDs.IsUnknown() {
+				l.SNICertificateIDs = types.ListNull(types.StringType)
+			}
+		} else {
+			if l.Domain.IsUnknown() {
+				l.Domain = types.StringNull()
+			}
+			if l.EnableHTTPToHTTPSRedirect.IsUnknown() {
+				l.EnableHTTPToHTTPSRedirect = types.BoolValue(false)
+			}
+			if l.SNICertificateIDs.IsUnknown() {
+				l.SNICertificateIDs = types.ListNull(types.StringType)
+			}
+		}
 
 		var poolID string
 		for _, p := range pools {
@@ -1626,4 +1800,83 @@ func (r *LoadBalancerResource) deleteAdditionalListener(ctx context.Context, lbI
 		return
 	}
 	del(pathLoadBalancerMonitorDelete, "vttLoadBalancerHealthMonitorId", l.MonitorID.ValueString())
+}
+
+func stringOrNull(s string) types.String {
+	if s == "" {
+		return types.StringNull()
+	}
+	return types.StringValue(s)
+}
+
+func parseSNICertIDs(ctx context.Context, list types.List, diags *diag.Diagnostics) []interface{} {
+	if list.IsNull() || list.IsUnknown() {
+		return nil
+	}
+	var raw []string
+	diags.Append(list.ElementsAs(ctx, &raw, false)...)
+	if diags.HasError() {
+		return nil
+	}
+	result := make([]interface{}, len(raw))
+	for i, s := range raw {
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			result[i] = n
+		} else {
+			result[i] = s
+		}
+	}
+	return result
+}
+
+func parseSNICertIDsFromAPI(raw []interface{}) types.List {
+	if raw == nil {
+		return types.ListNull(types.StringType)
+	}
+	elems := make([]attr.Value, len(raw))
+	for i, item := range raw {
+		elems[i] = types.StringValue(fmt.Sprintf("%v", item))
+	}
+	list, _ := types.ListValue(types.StringType, elems)
+	return list
+}
+
+func validateRedirect(protoPath, domainPath path.Path, protocol types.String, enableRedirect types.Bool, domain types.String) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if enableRedirect.IsUnknown() || enableRedirect.IsNull() {
+		return diags
+	}
+	if enableRedirect.ValueBool() {
+		proto := "HTTP"
+		if !protocol.IsNull() && !protocol.IsUnknown() {
+			proto = protocol.ValueString()
+		}
+		if !strings.EqualFold(proto, "HTTP") {
+			diags.AddAttributeError(protoPath, "Invalid Protocol for HTTP to HTTPS Redirect",
+				"enable_http_to_https_redirect is only valid when listener protocol is HTTP.")
+		}
+		if !domain.IsUnknown() {
+			if domain.IsNull() || strings.TrimSpace(domain.ValueString()) == "" {
+				diags.AddAttributeError(domainPath, "Domain Required for HTTP to HTTPS Redirect",
+					"domain must not be empty when enable_http_to_https_redirect is true.")
+			}
+		}
+	}
+	return diags
+}
+
+func validateSNICertificates(p path.Path, protocol types.String, sniCertIDs types.List) diag.Diagnostics {
+	var diags diag.Diagnostics
+	if sniCertIDs.IsUnknown() || sniCertIDs.IsNull() {
+		return diags
+	}
+	proto := "HTTP"
+	if !protocol.IsNull() && !protocol.IsUnknown() {
+		proto = protocol.ValueString()
+	}
+	if !strings.EqualFold(proto, "TERMINATED_HTTPS") {
+		diags.AddAttributeError(p, "Invalid Protocol for SNI Certificates",
+			"sni_certificate_ids is only valid when listener protocol is TERMINATED_HTTPS.")
+	}
+	return diags
 }

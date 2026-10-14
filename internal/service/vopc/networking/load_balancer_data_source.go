@@ -29,6 +29,7 @@ type LoadBalancerDataSource struct {
 
 type LoadBalancerDataSourceModel struct {
 	ID               types.String `tfsdk:"id"`
+	LoadBalancerID   types.Int64  `tfsdk:"load_balancer_id"`
 	Name             types.String `tfsdk:"name"`
 	Description      types.String `tfsdk:"description"`
 	SubnetID         types.String `tfsdk:"subnet_id"`
@@ -92,16 +93,7 @@ func (d *LoadBalancerDataSource) Metadata(_ context.Context, req datasource.Meta
 }
 
 func (d *LoadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
-	listenerAttrTypes := map[string]attr.Type{
-		"id":                types.StringType,
-		"name":              types.StringType,
-		"description":       types.StringType,
-		"protocol":          types.StringType,
-		"protocol_port":     types.Int64Type,
-		"x_forwarded_for":   types.BoolType,
-		"x_forwarded_port":  types.BoolType,
-		"x_forwarded_proto": types.BoolType,
-	}
+	listenerAttrTypes := listenerObjectTypes()
 
 	poolAttrTypes := map[string]attr.Type{
 		"id":                       types.StringType,
@@ -118,6 +110,10 @@ func (d *LoadBalancerDataSource) Schema(_ context.Context, _ datasource.SchemaRe
 				Optional:    true,
 				Computed:    true,
 				Description: "Load Balancer ID (vttLoadBalancerId). One of 'id', 'name' or 'ip_address' must be specified.",
+			},
+			"load_balancer_id": schema.Int64Attribute{
+				Computed:    true,
+				Description: "Load Balancer ID as integer.",
 			},
 			"name": schema.StringAttribute{
 				Optional:    true,
@@ -346,6 +342,7 @@ func (d *LoadBalancerDataSource) lookup(ctx context.Context, config *LoadBalance
 
 	return &LoadBalancerDataSourceModel{
 		ID:                   types.StringValue(fmt.Sprintf("%d", found.VttLoadBalancerID)),
+		LoadBalancerID:       types.Int64Value(found.VttLoadBalancerID),
 		Name:                 types.StringValue(found.Name),
 		Description:          types.StringValue(found.Description),
 		VpcID:                types.StringValue(vpcID),
@@ -376,14 +373,18 @@ func (d *LoadBalancerDataSource) fetchListeners(ctx context.Context, model *Load
 	}
 
 	var listResp []struct {
-		ID              string `json:"id"`
-		Name            string `json:"name"`
-		Description     string `json:"description"`
-		Protocol        string `json:"protocol"`
-		ProtocolPort    int    `json:"protocolPort"`
-		XForwardedFor   bool   `json:"xForwardedFor"`
-		XForwardedPort  bool   `json:"xForwardedPort"`
-		XForwardedProto bool   `json:"xForwardedProto"`
+		ID                        interface{}   `json:"id"`
+		Name                      string        `json:"name"`
+		Description               string        `json:"description"`
+		Protocol                  string        `json:"protocol"`
+		ProtocolPort              int           `json:"protocolPort"`
+		XForwardedFor             bool          `json:"xForwardedFor"`
+		XForwardedPort            bool          `json:"xForwardedPort"`
+		XForwardedProto           bool          `json:"xForwardedProto"`
+		IPAddress                 string        `json:"ipAddress"`
+		Domain                    string        `json:"domain"`
+		EnableHTTPToHTTPSRedirect bool          `json:"enableHttpToHttpsRedirect"`
+		SNICertificateIDList      []interface{} `json:"sniCertificateIdList"`
 	}
 
 	if err := json.Unmarshal(apiResp.Data, &listResp); err != nil {
@@ -393,40 +394,40 @@ func (d *LoadBalancerDataSource) fetchListeners(ctx context.Context, model *Load
 
 	var listeners []attr.Value
 	for _, item := range listResp {
-		listenerMap := map[string]attr.Value{
-			"id":                types.StringValue(item.ID),
-			"name":              types.StringValue(item.Name),
-			"description":       types.StringValue(item.Description),
-			"protocol":          types.StringValue(item.Protocol),
-			"protocol_port":     types.Int64Value(int64(item.ProtocolPort)),
-			"x_forwarded_for":   types.BoolValue(item.XForwardedFor),
-			"x_forwarded_port":  types.BoolValue(item.XForwardedPort),
-			"x_forwarded_proto": types.BoolValue(item.XForwardedProto),
+		var idStr string
+		switch v := item.ID.(type) {
+		case string:
+			idStr = v
+		case float64:
+			idStr = fmt.Sprintf("%d", int64(v))
+		case int64:
+			idStr = fmt.Sprintf("%d", v)
+		case int:
+			idStr = fmt.Sprintf("%d", v)
+		default:
+			idStr = fmt.Sprintf("%v", v)
 		}
-		obj, objDiags := types.ObjectValue(map[string]attr.Type{
-			"id":                types.StringType,
-			"name":              types.StringType,
-			"description":       types.StringType,
-			"protocol":          types.StringType,
-			"protocol_port":     types.Int64Type,
-			"x_forwarded_for":   types.BoolType,
-			"x_forwarded_port":  types.BoolType,
-			"x_forwarded_proto": types.BoolType,
-		}, listenerMap)
+
+		listenerMap := map[string]attr.Value{
+			"id":                            types.StringValue(idStr),
+			"name":                          types.StringValue(item.Name),
+			"description":                   types.StringValue(item.Description),
+			"protocol":                      types.StringValue(item.Protocol),
+			"protocol_port":                 types.Int64Value(int64(item.ProtocolPort)),
+			"x_forwarded_for":               types.BoolValue(item.XForwardedFor),
+			"x_forwarded_port":              types.BoolValue(item.XForwardedPort),
+			"x_forwarded_proto":             types.BoolValue(item.XForwardedProto),
+			"ip_address":                    stringOrNull(item.IPAddress),
+			"domain":                        stringOrNull(item.Domain),
+			"enable_http_to_https_redirect": types.BoolValue(item.EnableHTTPToHTTPSRedirect),
+			"sni_certificate_ids":          parseSNICertIDsFromAPI(item.SNICertificateIDList),
+		}
+		obj, objDiags := types.ObjectValue(listenerObjectTypes(), listenerMap)
 		diags.Append(objDiags...)
 		listeners = append(listeners, obj)
 	}
 
-	listType, listDiags := types.ListValue(types.ObjectType{AttrTypes: map[string]attr.Type{
-		"id":                types.StringType,
-		"name":              types.StringType,
-		"description":       types.StringType,
-		"protocol":          types.StringType,
-		"protocol_port":     types.Int64Type,
-		"x_forwarded_for":   types.BoolType,
-		"x_forwarded_port":  types.BoolType,
-		"x_forwarded_proto": types.BoolType,
-	}}, listeners)
+	listType, listDiags := types.ListValue(types.ObjectType{AttrTypes: listenerObjectTypes()}, listeners)
 	diags.Append(listDiags...)
 	model.Listeners = listType
 }

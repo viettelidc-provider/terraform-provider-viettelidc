@@ -21,7 +21,7 @@ var (
 	_ datasource.DataSourceWithConfigure = (*LaunchTemplateDataSource)(nil)
 )
 
-// LaunchTemplateDataSource implements `data "viettelidc_launch_template"` (lookup by ID).
+// LaunchTemplateDataSource implements `data "viettelidc_ovpc_launch_template"` (lookup by ID or name).
 type LaunchTemplateDataSource struct {
 	client       *client.Client
 	customerID   string
@@ -48,10 +48,10 @@ func (d *LaunchTemplateDataSource) Metadata(_ context.Context, req datasource.Me
 
 func (d *LaunchTemplateDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Read a ViettelIDC Launch Template by its ID.",
+		Description: "Read a ViettelIDC Launch Template by its ID or name.",
 		Attributes: map[string]schema.Attribute{
-			"id":          schema.StringAttribute{Required: true, Description: "Launch Template ID."},
-			"name":        schema.StringAttribute{Computed: true, Description: "Template name."},
+			"id":          schema.StringAttribute{Optional: true, Computed: true, Description: "Launch Template ID. Either 'id' or 'name' must be specified."},
+			"name":        schema.StringAttribute{Optional: true, Computed: true, Description: "Template name. Either 'id' or 'name' must be specified."},
 			"description": schema.StringAttribute{Computed: true, Description: "Description."},
 			"vm_id":       schema.StringAttribute{Computed: true, Description: "Source VM ID."},
 			"memory_size": schema.Int64Attribute{Computed: true, Description: "Memory size in GB."},
@@ -79,27 +79,72 @@ func (d *LaunchTemplateDataSource) Read(ctx context.Context, req datasource.Read
 		return
 	}
 
+	hasID := !cfg.ID.IsNull() && cfg.ID.ValueString() != ""
+	hasName := !cfg.Name.IsNull() && cfg.Name.ValueString() != ""
+	if !hasID && !hasName {
+		resp.Diagnostics.AddError("Missing lookup key", "Set either 'id' or 'name'.")
+		return
+	}
+
 	vpcID, diags := resolveVpcID(cfg.VpcID.ValueString(), d.defaultVpcID)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
+	if hasID {
+		body := map[string]interface{}{
+			"id":          cfg.ID.ValueString(),
+			"vpc_id":      vpcID,
+			"customer_id": d.customerID,
+		}
+		apiResp, diags := callAPI(ctx, d.client, pathLaunchTemplateDetail, body)
+		resp.Diagnostics.Append(diags...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+
+		if err := mapLaunchTemplateToDataSource(apiResp, &cfg, vpcID); err != nil {
+			resp.Diagnostics.AddError("Decode launch template detail", err.Error())
+			return
+		}
+		resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)
+		return
+	}
+
 	body := map[string]interface{}{
-		"id":          cfg.ID.ValueString(),
 		"vpc_id":      vpcID,
 		"customer_id": d.customerID,
 	}
-	apiResp, diags := callAPI(ctx, d.client, pathLaunchTemplateDetail, body)
+	apiResp, diags := callAPI(ctx, d.client, pathLaunchTemplateListAll, body)
 	resp.Diagnostics.Append(diags...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	if err := mapLaunchTemplateToDataSource(apiResp, &cfg, vpcID); err != nil {
-		resp.Diagnostics.AddError("Decode launch template detail", err.Error())
+	items, err := decodeLaunchTemplateList(apiResp)
+	if err != nil {
+		resp.Diagnostics.AddError("Decode launch template list", err.Error())
 		return
 	}
+
+	wantName := cfg.Name.ValueString()
+	var matches []map[string]interface{}
+	for _, raw := range items {
+		if asString(raw, "name") == wantName {
+			matches = append(matches, raw)
+		}
+	}
+	if len(matches) == 0 {
+		resp.Diagnostics.AddError("Launch Template not found", fmt.Sprintf("No launch template named %q found in VPC %s.", wantName, vpcID))
+		return
+	}
+	if len(matches) > 1 {
+		resp.Diagnostics.AddError("Ambiguous Launch Template name", fmt.Sprintf("Found %d launch templates named %q in VPC %s; specify 'id' instead.", len(matches), wantName, vpcID))
+		return
+	}
+
+	fillLaunchTemplateMapToDataSource(matches[0], &cfg, vpcID)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)
 }
 
@@ -109,6 +154,11 @@ func mapLaunchTemplateToDataSource(resp *client.APIResponse, m *LaunchTemplateDa
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return fmt.Errorf("decode data: %w", err)
 	}
+	fillLaunchTemplateMapToDataSource(data, m, vpcID)
+	return nil
+}
+
+func fillLaunchTemplateMapToDataSource(data map[string]interface{}, m *LaunchTemplateDataSourceModel, vpcID string) {
 	if id := asIDString(data, "id"); id != "" {
 		m.ID = types.StringValue(id)
 	}
@@ -123,6 +173,8 @@ func mapLaunchTemplateToDataSource(resp *client.APIResponse, m *LaunchTemplateDa
 	}
 	if v := asString(data, "vmId"); v != "" {
 		m.VmID = types.StringValue(v)
+	} else if m.VmID.IsNull() || m.VmID.IsUnknown() {
+		m.VmID = types.StringValue("")
 	}
 	m.MemorySize = types.Int64Value(asInt64(data, "memorySize"))
 	m.CpuSize = types.Int64Value(asInt64(data, "cpuSize"))
@@ -131,5 +183,4 @@ func mapLaunchTemplateToDataSource(resp *client.APIResponse, m *LaunchTemplateDa
 	} else {
 		m.VpcID = types.StringValue(vpcID)
 	}
-	return nil
 }

@@ -127,8 +127,12 @@ func (d *NetworkInterfacesDataSource) Read(ctx context.Context, req datasource.R
 	cfg.VpcID = types.StringValue(vpcID)
 	cfg.NetworkInterfaces = make([]NetworkInterfaceItem, 0, len(items))
 	for _, raw := range items {
+		nicID := asString(raw, "vttNetworkInterfaceId")
+		if nicID == "" {
+			nicID = asIDString(raw, "id")
+		}
 		cfg.NetworkInterfaces = append(cfg.NetworkInterfaces, NetworkInterfaceItem{
-			ID:           types.StringValue(asString(raw, "vttNetworkInterfaceId")),
+			ID:           types.StringValue(nicID),
 			Name:         types.StringValue(asString(raw, "name")),
 			SubnetID:     types.StringValue(asString(raw, "vttSubnetId")),
 			IpAssignType: types.StringValue(asString(raw, "ipAssignType")),

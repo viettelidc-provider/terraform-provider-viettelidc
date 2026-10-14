@@ -19,6 +19,7 @@ resource "viettelidc_ovpc_autoscale_group" "web" {
   name                = "web-asg"
   description         = "Auto scaling group for web tier"
   launch_template_id  = viettelidc_ovpc_launch_template.web.id
+  is_autoscale        = true
   desired_capacity    = 2
   min_size            = 1
   max_size            = 5
@@ -36,7 +37,8 @@ resource "viettelidc_ovpc_autoscale_group" "fixed_pool" {
   name                 = "web-pool"
   description          = "Fixed pool behind web load balancer"
   launch_template_id   = viettelidc_ovpc_launch_template.web.id
-  desired_capacity   = 1
+  is_autoscale         = false
+  desired_capacity     = 1
 
   has_load_balancer    = true
   loadbalancer_id      = viettelidc_ovpc_load_balancer.web.id

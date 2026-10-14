@@ -65,6 +65,46 @@ func TestUnit_LaunchTemplateDataSource_ByID(t *testing.T) {
 	}
 }
 
+func TestUnit_LaunchTemplateDataSource_ByName(t *testing.T) {
+	t.Parallel()
+	srv := newFakeAPI(t)
+
+	srv.on(pathLaunchTemplateListAll, func(_ map[string]interface{}) (interface{}, string, interface{}) {
+		return float64(0), "Success", []map[string]interface{}{
+			{"id": "lt-1", "name": "other-template", "memorySize": float64(2048), "cpuSize": float64(1), "description": "other"},
+			{"id": "lt-2", "name": "web-template", "memorySize": float64(4096), "cpuSize": float64(2), "description": "web", "vmId": "vm-99"},
+		}
+	})
+
+	r := &LaunchTemplateDataSource{client: srv.newClient(), customerID: "244850", defaultVpcID: "36961"}
+	apiResp, diags := callAPI(context.Background(), r.client, pathLaunchTemplateListAll, map[string]interface{}{
+		"vpc_id":      "36961",
+		"customer_id": r.customerID,
+	})
+	if diags.HasError() {
+		t.Fatalf("list-all call failed: %v", diags)
+	}
+	items, err := decodeLaunchTemplateList(apiResp)
+	if err != nil {
+		t.Fatalf("decodeLaunchTemplateList: %v", err)
+	}
+	var found map[string]interface{}
+	for _, raw := range items {
+		if asString(raw, "name") == "web-template" {
+			found = raw
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected to find web-template")
+	}
+	model := &LaunchTemplateDataSourceModel{Name: types.StringValue("web-template")}
+	fillLaunchTemplateMapToDataSource(found, model, "36961")
+	if model.ID.ValueString() != "lt-2" || model.VmID.ValueString() != "vm-99" || model.MemorySize.ValueInt64() != 4096 {
+		t.Fatalf("unexpected model: %+v", model)
+	}
+}
+
 func TestUnit_LaunchTemplateDataSource_NotFound(t *testing.T) {
 	t.Parallel()
 	srv := newFakeAPI(t)

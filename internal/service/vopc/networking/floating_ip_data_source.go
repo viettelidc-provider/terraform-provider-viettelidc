@@ -21,7 +21,7 @@ var (
 	_ datasource.DataSourceWithConfigure = (*FloatingIPDataSource)(nil)
 )
 
-// FloatingIPDataSource implements `data "viettelidc_floating_ip"` (lookup by id).
+// FloatingIPDataSource implements `data "viettelidc_ovpc_floating_ip"` (lookup by id, public_ip, or name).
 type FloatingIPDataSource struct {
 	client       *client.Client
 	customerID   string
@@ -48,14 +48,14 @@ func (d *FloatingIPDataSource) Metadata(_ context.Context, req datasource.Metada
 
 func (d *FloatingIPDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		Description: "Look up a ViettelIDC Floating IP by its ID (vttFloatingId) or Public IP.",
+		Description: "Look up a ViettelIDC Floating IP by its ID (vttFloatingId), Public IP, or name.",
 		Attributes: map[string]schema.Attribute{
-			"id":                   schema.StringAttribute{Optional: true, Computed: true, Description: "Floating IP ID (vttFloatingId). Mutually optional with public_ip."},
-			"public_ip":            schema.StringAttribute{Optional: true, Computed: true, Description: "Public IPv4 address. Mutually optional with id."},
+			"id":                   schema.StringAttribute{Optional: true, Computed: true, Description: "Floating IP ID (vttFloatingId). At least one of 'id', 'public_ip', or 'name' must be specified."},
+			"public_ip":            schema.StringAttribute{Optional: true, Computed: true, Description: "Public IPv4 address. At least one of 'id', 'public_ip', or 'name' must be specified."},
 			"instance_id":          schema.StringAttribute{Computed: true, Description: "Associated VM instance ID."},
 			"network_interface_id": schema.StringAttribute{Computed: true, Description: "Associated NIC ID."},
 			"vpc_id":               schema.StringAttribute{Optional: true, Computed: true, Description: "VPC ID."},
-			"name":                 schema.StringAttribute{Computed: true, Description: "Name of the Floating IP."},
+			"name":                 schema.StringAttribute{Optional: true, Computed: true, Description: "Name of the Floating IP. At least one of 'id', 'public_ip', or 'name' must be specified."},
 			"type":                 schema.StringAttribute{Computed: true, Description: "Type of the Floating IP (e.g. public)."},
 			"status":               schema.StringAttribute{Computed: true, Description: "Status of the Floating IP."},
 			"attachment_status":    schema.StringAttribute{Computed: true, Description: "Attachment status (e.g. AVAILABLE)."},
@@ -82,8 +82,9 @@ func (d *FloatingIPDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	}
 	hasID := !cfg.ID.IsNull() && cfg.ID.ValueString() != ""
 	hasPublicIP := !cfg.PublicIP.IsNull() && cfg.PublicIP.ValueString() != ""
-	if !hasID && !hasPublicIP {
-		resp.Diagnostics.AddError("Missing lookup key", "Set either 'id' or 'public_ip'.")
+	hasName := !cfg.Name.IsNull() && cfg.Name.ValueString() != ""
+	if !hasID && !hasPublicIP && !hasName {
+		resp.Diagnostics.AddError("Missing lookup key", "Set at least one of 'id', 'public_ip', or 'name'.")
 		return
 	}
 
@@ -94,6 +95,7 @@ func (d *FloatingIPDataSource) Read(ctx context.Context, req datasource.ReadRequ
 
 	if hasID {
 		body := map[string]interface{}{
+			"id":             cfg.ID.ValueString(),
 			"floating_ip_id": cfg.ID.ValueString(),
 			"vpc_id":         vpcID,
 			"customer_id":    d.customerID,
@@ -113,23 +115,26 @@ func (d *FloatingIPDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		return
 	}
 
-	// Lookup by public_ip
+	// Lookup by public_ip and/or name
 	var vpcIdVal interface{} = vpcID
 	if v, err := strconv.Atoi(vpcID); err == nil {
 		vpcIdVal = v
 	}
 
+	filters := []map[string]interface{}{}
+	if hasPublicIP {
+		filters = append(filters, map[string]interface{}{
+			"name":   "vni.ip_address",
+			"values": []string{cfg.PublicIP.ValueString()},
+		})
+	}
+
 	body := map[string]interface{}{
-		"pageIndex":  0,
-		"pageSize":   100,
+		"pageIndex":   0,
+		"pageSize":    1000,
 		"customer_id": d.customerID,
-		"filters": []map[string]interface{}{
-			{
-				"name":   "vni.ip_address",
-				"values": []string{cfg.PublicIP.ValueString()},
-			},
-		},
-		"vpc_id": vpcIdVal,
+		"filters":     filters,
+		"vpc_id":      vpcIdVal,
 	}
 	apiResp, diags := callAPI(ctx, d.client, pathFloatingIPList, body)
 	resp.Diagnostics.Append(diags...)
@@ -145,18 +150,23 @@ func (d *FloatingIPDataSource) Read(ctx context.Context, req datasource.ReadRequ
 
 	var found *FloatingIPDataSourceModel
 	for i := range items {
-		if items[i].PublicIP.ValueString() == cfg.PublicIP.ValueString() {
-			found = &items[i]
-			break
+		if hasPublicIP && items[i].PublicIP.ValueString() != cfg.PublicIP.ValueString() {
+			continue
 		}
+		if hasName && items[i].Name.ValueString() != cfg.Name.ValueString() {
+			continue
+		}
+		found = &items[i]
+		break
 	}
 
 	if found == nil {
-		resp.Diagnostics.AddError("Floating IP not found", fmt.Sprintf("No Floating IP with public_ip %q found.", cfg.PublicIP.ValueString()))
+		resp.Diagnostics.AddError("Floating IP not found", fmt.Sprintf("No Floating IP matching public_ip=%q name=%q found.", cfg.PublicIP.ValueString(), cfg.Name.ValueString()))
 		return
 	}
 
 	cfg.ID = found.ID
+	cfg.PublicIP = found.PublicIP
 	cfg.InstanceID = found.InstanceID
 	cfg.NetworkInterfaceID = found.NetworkInterfaceID
 	cfg.VpcID = types.StringValue(vpcID)
@@ -164,7 +174,6 @@ func (d *FloatingIPDataSource) Read(ctx context.Context, req datasource.ReadRequ
 	cfg.Type = found.Type
 	cfg.Status = found.Status
 	cfg.AttachmentStatus = found.AttachmentStatus
-
 	resp.Diagnostics.Append(resp.State.Set(ctx, &cfg)...)
 }
 
@@ -173,7 +182,9 @@ func mapFloatingIPDataSourceResponse(resp *client.APIResponse, m *FloatingIPData
 	if err := json.Unmarshal(resp.Data, &data); err != nil {
 		return fmt.Errorf("decode data: %w", err)
 	}
-	if ip := asString(data, "publicIp"); ip != "" {
+	if ip := asString(data, "floatingIp"); ip != "" {
+		m.PublicIP = types.StringValue(ip)
+	} else if ip := asString(data, "publicIp"); ip != "" {
 		m.PublicIP = types.StringValue(ip)
 	} else if ip := asString(data, "publicIP"); ip != "" {
 		m.PublicIP = types.StringValue(ip)
@@ -182,6 +193,8 @@ func mapFloatingIPDataSourceResponse(resp *client.APIResponse, m *FloatingIPData
 		m.InstanceID = types.StringValue(vmID)
 	}
 	if nicID := asString(data, "vttNetworkInterfaceId"); nicID != "" {
+		m.NetworkInterfaceID = types.StringValue(nicID)
+	} else if nicID := asString(data, "networkInterfaceForFloating"); nicID != "" {
 		m.NetworkInterfaceID = types.StringValue(nicID)
 	}
 	m.Name = types.StringValue(asString(data, "name"))
