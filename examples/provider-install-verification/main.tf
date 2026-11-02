@@ -16,11 +16,9 @@ terraform {
 
 provider "local" {}
 
-provider "viettelidc" {
-  domain_id = "9e9480cc-96aa-446e-b08b-5cd7b2f438ab"
-  username  = "test-iac"
-  password  = "Vtdc@2024"
-}
+# Credentials are read from VIETTELIDC_DOMAIN_ID, VIETTELIDC_USERNAME and
+# VIETTELIDC_PASSWORD.
+provider "viettelidc" {}
 
 data "viettelidc_voks_cluster" "cluster" {
   id = 2555

@@ -29,7 +29,7 @@ data "viettelidc_voks_cluster" "cluster" {
   name = "k8s-cluster"
   status = "SUCCESS" 
   version = "1.8.0"
-  endpoint = "https://171.244.141.234:6443"
+  endpoint = "https://203.0.113.10:6443"
   
   nfs = {
     cpu = 4
