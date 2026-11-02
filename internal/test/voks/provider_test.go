@@ -4,6 +4,7 @@
 package voks
 
 import (
+	"os"
 	"terraform-provider-viettelidc/internal/provider"
 	"testing"
 
@@ -16,12 +17,10 @@ import (
 // CLI command executed to create a provider server to which the CLI can
 // reattach.
 var (
+	// Credentials come from VIETTELIDC_DOMAIN_ID, VIETTELIDC_USERNAME and
+	// VIETTELIDC_PASSWORD; see testAccPreCheck.
 	providerConfig = `
-provider "viettelidc" {
-  domain_id = "9e9480cc-96aa-446e-b08b-5cd7b2f438ab"
-  username = "test-iac"
-  password = "Vtdc@2024"
-}
+provider "viettelidc" {}
 `
 	testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){
 		"viettelidc": providerserver.NewProtocol6WithError(provider.New("test")()),
@@ -29,7 +28,9 @@ provider "viettelidc" {
 )
 
 func testAccPreCheck(t *testing.T) {
-	// You can add code here to run prior to any test case execution, for example assertions
-	// about the appropriate environment variables being set are common to see in a pre-check
-	// function.
+	for _, env := range []string{"VIETTELIDC_DOMAIN_ID", "VIETTELIDC_USERNAME", "VIETTELIDC_PASSWORD"} {
+		if os.Getenv(env) == "" {
+			t.Fatalf("%s must be set for acceptance tests", env)
+		}
+	}
 }

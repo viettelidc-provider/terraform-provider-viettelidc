@@ -1,7 +1,7 @@
 # vLB Layer 7 Features — Test Case Suite
 
-> **Live Cloud Credentials**
-> - Account: `email = "tandt@viettelidc.com.vn"`, `password = "Comopo2026@"`, `host_id = 7`, `customerId = 238250`
+> **Test Environment**
+> - Account: supplied via `VIETTELIDC_EMAIL`, `VIETTELIDC_PASSWORD`, `VIETTELIDC_HOST_ID`, `VIETTELIDC_CUSTOMER_ID` (never commit real values)
 > - VPC: `40784`
 > - Load Balancer: `1059`
 > - Listener: `2567` (protocol: HTTP or TERMINATED_HTTPS, status: success)
